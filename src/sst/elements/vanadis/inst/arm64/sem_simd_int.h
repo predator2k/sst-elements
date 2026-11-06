@@ -125,10 +125,11 @@ template <typename U>
 inline U
 satDoubleMulHigh(U x, U y, bool rounding, uint32_t& flags)
 {
+    // (2 * x * y + round) >> bits, computed without the factor 2 so a 64-bit element stays inside 128 bits.
     const unsigned bits = sizeof(U) * 8;
-    s128 p = 2 * widen(x, false) * widen(y, false);
-    if ( rounding ) p += static_cast<s128>(1) << (bits - 1);
-    return static_cast<U>(satQ(p >> bits, bits, false, flags));
+    s128 p = widen(x, false) * widen(y, false);
+    if ( rounding ) p += static_cast<s128>(1) << (bits - 2);
+    return static_cast<U>(satQ(p >> (bits - 1), bits, false, flags));
 }
 
 // SQRDMLAH and SQRDMLSH of one element triple.
@@ -137,10 +138,11 @@ inline U
 satRoundDoubleMulAccum(U d, U x, U y, bool subtract, uint32_t& flags)
 {
     const unsigned bits = sizeof(U) * 8;
-    const s128 product = 2 * widen(x, false) * widen(y, false);
-    const s128 accum = (widen(d, false) * (static_cast<s128>(1) << bits)) + (subtract ? -product : product) +
-                       (static_cast<s128>(1) << (bits - 1));
-    return static_cast<U>(satQ(accum >> bits, bits, false, flags));
+    // ((d << bits) +- 2 * x * y + round) >> bits, without the common factor 2.
+    const s128 product = widen(x, false) * widen(y, false);
+    const s128 accum = (widen(d, false) * (static_cast<s128>(1) << (bits - 1))) + (subtract ? -product : product) +
+                       (static_cast<s128>(1) << (bits - 2));
+    return static_cast<U>(satQ(accum >> (bits - 1), bits, false, flags));
 }
 
 // Three registers of the same element size. c = (U << 5) | opcode of the encoding. Sources: Vn, Vm and, for the

@@ -40,6 +40,17 @@ byWide(uint32_t log2_wide, F&& f)
     }
 }
 
+// ShiftSat of the Arm architecture: the whole element is the signed shift count, clamped to esize + 1.
+template <typename U>
+inline int
+shiftSat(U y)
+{
+    using S = std::make_signed_t<U>;
+    const int64_t limit = sizeof(U) * 8 + 1;
+    const int64_t v = static_cast<S>(y);
+    return static_cast<int>(v > limit ? limit : (v < -limit ? -limit : v));
+}
+
 // The predicated group 0x44..8000: c = bits 20..16.
 template <typename U>
 inline U
@@ -50,12 +61,12 @@ predElem(uint32_t code, U x, U y)
     const bool     is_u = code & 1;
     const s128     ix = widen(x, is_u), iy = widen(y, is_u);
     switch ( code ) {
-    case 0x02: case 0x03: return regShift(x, static_cast<int8_t>(y), is_u, true, false, flags);
-    case 0x06: case 0x07: return regShift(y, static_cast<int8_t>(x), is_u, true, false, flags);
-    case 0x08: case 0x09: return regShift(x, static_cast<int8_t>(y), is_u, false, true, flags);
-    case 0x0A: case 0x0B: return regShift(x, static_cast<int8_t>(y), is_u, true, true, flags);
-    case 0x0C: case 0x0D: return regShift(y, static_cast<int8_t>(x), is_u, false, true, flags);
-    case 0x0E: case 0x0F: return regShift(y, static_cast<int8_t>(x), is_u, true, true, flags);
+    case 0x02: case 0x03: return regShift(x, shiftSat(y), is_u, true, false, flags);
+    case 0x06: case 0x07: return regShift(y, shiftSat(x), is_u, true, false, flags);
+    case 0x08: case 0x09: return regShift(x, shiftSat(y), is_u, false, true, flags);
+    case 0x0A: case 0x0B: return regShift(x, shiftSat(y), is_u, true, true, flags);
+    case 0x0C: case 0x0D: return regShift(y, shiftSat(x), is_u, false, true, flags);
+    case 0x0E: case 0x0F: return regShift(y, shiftSat(x), is_u, true, true, flags);
     case 0x10: case 0x11: return static_cast<U>((ix + iy) >> 1);
     case 0x12: case 0x13: return static_cast<U>((ix - iy) >> 1);
     case 0x14: case 0x15: return static_cast<U>((ix + iy + 1) >> 1);
@@ -646,24 +657,16 @@ adcLong(VanadisArm64Inst& op, VanadisRegisterFile* rf)
     const unsigned vl = vlOf(rf);
     byElem(op.a, [&](auto zero) {
         using U = decltype(zero);
-        const unsigned half_bits = sizeof(U) * 4;
-        const U        half_mask = static_cast<U>((U(1) << half_bits) - 1);
+        const unsigned bits = sizeof(U) * 8;
         const unsigned top = op.c & 1;
         for ( unsigned e = 0; e < vl / sizeof(U) / 2; ++e ) {
-            const U n = vget<U>(op.Vin(rf, 1), 2 * e + top);
-            const U m = vget<U>(op.Vin(rf, 2), 2 * e);
             const U d = vget<U>(op.Vin(rf, 0), 2 * e);
-            const U carry_in = vget<U>(op.Vin(rf, 2), 2 * e + 1) & 1;
-            (void)m;
-            // The carry source is the second element of the pair in Zm; the addend is the even element of Zm.
-            const u128 a = static_cast<u128>(d);
-            const u128 b = static_cast<u128>((op.c >= 2) ? static_cast<U>(~n) : n) & half_mask;
-            const u128 sum = (a & half_mask) + b + carry_in;
-            const U low = static_cast<U>(sum) & half_mask;
-            const U carry_out = static_cast<U>((sum >> half_bits) & 1);
-            (void)low;
-            vset<U>(r, 2 * e, static_cast<U>(sum) & half_mask);
-            vset<U>(r, 2 * e + 1, carry_out);
+            U n = vget<U>(op.Vin(rf, 1), 2 * e + top);
+            if ( op.c >= 2 ) n = static_cast<U>(~n);
+            const unsigned carry_in = vget<U>(op.Vin(rf, 2), 2 * e + 1) & 1;
+            const u128 sum = static_cast<u128>(d) + static_cast<u128>(n) + carry_in;
+            vset<U>(r, 2 * e, static_cast<U>(sum));
+            vset<U>(r, 2 * e + 1, static_cast<U>((sum >> bits) & 1));
         }
     });
     writeZ(op, rf, r);

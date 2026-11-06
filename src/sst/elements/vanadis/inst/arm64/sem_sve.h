@@ -579,11 +579,7 @@ predInit(VanadisArm64Inst& op, VanadisRegisterFile* rf)
     std::memset(r, 0, vl / 8);
     for ( uint64_t e = 0; e < op.imm; ++e ) pset(r, static_cast<unsigned>(e * ebytes), true);
     writeP(op, rf, r);
-    if ( op.d ) {
-        uint8_t all[MAX_VL_BYTES / 8];
-        std::memset(all, 0xFF, vl / 8);
-        op.setX(rf, 0, predTest(all, r, vl, ebytes));
-    }
+    if ( op.d ) op.setX(rf, 0, predTest(r, r, vl, ebytes));
 }
 
 inline void
@@ -648,9 +644,7 @@ pnext(VanadisArm64Inst& op, VanadisRegisterFile* rf)
         }
     }
     writeP(op, rf, r);
-    uint8_t all[MAX_VL_BYTES / 8];
-    std::memset(all, 0xFF, vl / 8);
-    op.setX(rf, 0, predTest(all, r, vl, ebytes));
+    op.setX(rf, 0, predTest(g, r, vl, ebytes));
 }
 
 // BRKA, BRKB (c 0, 1). Sources Pg, Pn; with merging (d & 1) also Pd. d & 2 = sets flags.
@@ -728,11 +722,7 @@ brkp(VanadisArm64Inst& op, VanadisRegisterFile* rf)
         }
     }
     writeP(op, rf, r);
-    if ( op.d & 2 ) {
-        uint8_t all[MAX_VL_BYTES / 8];
-        std::memset(all, 0xFF, vl / 8);
-        op.setX(rf, 0, predTest(all, r, vl, 1));
-    }
+    if ( op.d & 2 ) op.setX(rf, 0, predTest(g, r, vl, 1));
 }
 
 // CNTP: sources Pg, Pn; integer destination Rd. a = element size.
@@ -875,7 +865,7 @@ whileConflict(VanadisArm64Inst& op, VanadisRegisterFile* rf)
     if ( op.c == 1 ) diff = diff < 0 ? -diff : diff;
     std::memset(r, 0, vl / 8);
     const s128 limit = diff / static_cast<s128>(ebytes);
-    bool always = op.c == 0 ? diff <= 0 : diff == 0;
+    const bool always = op.c == 0 ? limit <= 0 : limit == 0;
     for ( unsigned e = 0; e < elements; ++e ) {
         pset(r, e * ebytes, always || static_cast<s128>(e) < limit);
     }
@@ -1090,8 +1080,7 @@ permuteP(VanadisArm64Inst& op, VanadisRegisterFile* rf)
     }
     permuteBytes(t, a, b, vl, ebytes, op.c);
     std::memset(r, 0, vl / 8);
-    // Only the lowest bit of each element is significant in a result.
-    for ( unsigned e = 0; e < vl / ebytes; ++e ) pset(r, e * ebytes, t[e * ebytes]);
+    for ( unsigned k = 0; k < vl; ++k ) pset(r, k, t[k]);
     writeP(op, rf, r);
 }
 
@@ -1103,7 +1092,9 @@ revP(VanadisArm64Inst& op, VanadisRegisterFile* rf)
     const unsigned vl = vlOf(rf), ebytes = 1u << op.a;
     const unsigned n = vl / ebytes;
     std::memset(r, 0, vl / 8);
-    for ( unsigned e = 0; e < n; ++e ) pset(r, e * ebytes, pbit(op.Vin(rf, 0), (n - 1 - e) * ebytes));
+    for ( unsigned e = 0; e < n; ++e ) {
+        for ( unsigned k = 0; k < ebytes; ++k ) pset(r, e * ebytes + k, pbit(op.Vin(rf, 0), (n - 1 - e) * ebytes + k));
+    }
     writeP(op, rf, r);
 }
 

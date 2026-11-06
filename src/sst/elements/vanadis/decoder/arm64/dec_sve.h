@@ -116,8 +116,7 @@ VanadisARM64Decoder::decodeSveInt(uint64_t addr, uint32_t ins, VanadisInstructio
             return true;
         }
         case 4: {
-            const uint32_t kind = bits(ins, 20, 19);
-            if ( kind == 0 ) {
+            if ( !bit(ins, 20) ) {
                 const uint32_t tsz = (size << 2) | bits(ins, 9, 8);
                 if ( tsz == 0 ) return false;
                 const uint32_t a = 31 - __builtin_clz(tsz);
@@ -132,9 +131,8 @@ VanadisARM64Decoder::decodeSveInt(uint64_t addr, uint32_t ins, VanadisInstructio
                 i->imm = left ? full - esize : 2 * esize - full;
                 return true;
             }
-            if ( kind == 1 ) return false;
             const uint32_t opc = bits(ins, 18, 16);
-            const bool wide = kind == 3;
+            const bool wide = bit(ins, 19);
             if ( wide ? (size == 3 || !(opc <= 1 || opc == 3)) : !(opc <= 1 || opc == 3 || opc == 4 || opc == 5 || opc == 7) ) return false;
             auto* i = op(bundle, addr, "SHIFT.PV", INST_FP_ARITH, predShiftVec, {}, {}, { pg, rd, rn }, { rd });
             i->a = size;
