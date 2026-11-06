@@ -191,13 +191,34 @@ protected:
     // A destination list: empty when the destination is XZR.
     static std::vector<uint16_t> dz(uint32_t r) { return r == 31 ? std::vector<uint16_t>{} : std::vector<uint16_t>{ static_cast<uint16_t>(r) }; }
 
+    // A bundle stores a clone of every instruction it is given, so a micro-op whose payload the caller still
+    // sets is held here and added when the next micro-op comes or the decode ends.
+    VanadisArm64Inst* pending_ = nullptr;
+
+    void flushPending(VanadisInstructionBundle* bundle)
+    {
+        if ( pending_ != nullptr ) {
+            bundle->addInstruction(pending_);
+            delete pending_;
+            pending_ = nullptr;
+        }
+    }
+
+    // Adds one micro-op to the bundle after any pending one, and frees the original.
+    void add(VanadisInstructionBundle* bundle, VanadisInstruction* inst)
+    {
+        flushPending(bundle);
+        bundle->addInstruction(inst);
+        delete inst;
+    }
+
     VanadisArm64Inst* op(VanadisInstructionBundle* bundle, uint64_t addr, const char* name, VanadisFunctionalUnitType unit,
         VanadisArm64Inst::Semantics fn, const std::vector<uint16_t>& in, const std::vector<uint16_t>& out,
         const std::vector<uint16_t>& fin = {}, const std::vector<uint16_t>& fout = {})
     {
-        auto* inst = new VanadisArm64Inst(addr, hw_thr, options, name, unit, fn, in, out, fin, fout);
-        bundle->addInstruction(inst);
-        return inst;
+        flushPending(bundle);
+        pending_ = new VanadisArm64Inst(addr, hw_thr, options, name, unit, fn, in, out, fin, fout);
+        return pending_;
     }
 
     // DecodeBitMasks of the Arm architecture: false for a reserved encoding.
@@ -259,11 +280,12 @@ protected:
         else if ( op0 == 0b0010 ) {
             ok = decodeSve(addr, ins, bundle);
         }
+        flushPending(bundle);
         if ( !ok ) {
             if ( fatal_decode_fault ) {
                 output_->fatal(CALL_INFO, -1, "[decode] unknown instruction 0x%08" PRIx32 " at 0x%" PRI_ADDR "\n", ins, addr);
             }
-            bundle->addInstruction(new VanadisInstructionDecodeFault(addr, hw_thr, options));
+            add(bundle, new VanadisInstructionDecodeFault(addr, hw_thr, options));
         }
     }
 
@@ -280,7 +302,7 @@ protected:
             const int64_t imm = sext((bits(ins, 23, 5) << 2) | bits(ins, 30, 29), 21);
             uint64_t      val = bit(ins, 31) ? ((addr & ~0xFFFull) + (imm << 12)) : (addr + imm);
             if ( rd == 31 ) {
-                bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options));
+                add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
                 return true;
             }
             op(bundle, addr, bit(ins, 31) ? "ADRP" : "ADR", INST_INT_ARITH, movImm, {}, { static_cast<uint16_t>(rd) })->imm = val;
@@ -337,7 +359,7 @@ protected:
             if ( opc == 1 || (!sf && hw >= 2) ) return false;
             const uint64_t imm = static_cast<uint64_t>(bits(ins, 20, 5)) << (hw * 16);
             if ( rd == 31 ) {
-                bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options));
+                add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
                 return true;
             }
             if ( opc == 3 ) {
@@ -361,7 +383,7 @@ protected:
             const uint32_t immr = bits(ins, 21, 16), imms = bits(ins, 15, 10);
             if ( !decodeBitMasks(N, imms, immr, sf, &wmask, &tmask) ) return false;
             if ( rd == 31 ) {
-                bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options));
+                add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
                 return true;
             }
             std::vector<uint16_t> in{ rz(rn) };
@@ -375,7 +397,7 @@ protected:
         {   // extract
             if ( bits(ins, 30, 29) != 0 || bit(ins, 21) || bit(ins, 22) != sf || (!sf && bit(ins, 15)) ) return false;
             if ( rd == 31 ) {
-                bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options));
+                add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
                 return true;
             }
             auto* i = op(bundle, addr, "EXTR", INST_INT_ARITH, extr, { rz(rn), rz(bits(ins, 20, 16)) }, { static_cast<uint16_t>(rd) });
@@ -404,7 +426,7 @@ protected:
             return out;
         };
         auto nop = [&]() {
-            bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options));
+            add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
             return true;
         };
         if ( op1 == 0 ) {
@@ -588,14 +610,14 @@ protected:
             // B, BL
             const int64_t off = sext(bits(ins, 25, 0), 26) * 4;
             const bool link = bit(ins, 31);
-            bundle->addInstruction(new VanadisArm64Branch(addr, hw_thr, options, link ? "BL" : "B",
+            add(bundle, new VanadisArm64Branch(addr, hw_thr, options, link ? "BL" : "B",
                 VanadisArm64BranchKind::DIRECT, off, 0, true, {}, link ? std::vector<uint16_t>{ 30 } : std::vector<uint16_t>{}));
             return true;
         }
         if ( bits(ins, 30, 25) == 0b011010 ) {
             // CBZ, CBNZ
             const int64_t off = sext(bits(ins, 23, 5), 19) * 4;
-            bundle->addInstruction(new VanadisArm64Branch(addr, hw_thr, options, bit(ins, 24) ? "CBNZ" : "CBZ",
+            add(bundle, new VanadisArm64Branch(addr, hw_thr, options, bit(ins, 24) ? "CBNZ" : "CBZ",
                 bit(ins, 24) ? VanadisArm64BranchKind::CBNZ : VanadisArm64BranchKind::CBZ, off, 0, bit(ins, 31),
                 { rz(bits(ins, 4, 0)) }, {}));
             return true;
@@ -604,7 +626,7 @@ protected:
             // TBZ, TBNZ
             const int64_t off = sext(bits(ins, 18, 5), 14) * 4;
             const uint32_t b = (bits(ins, 31, 31) << 5) | bits(ins, 23, 19);
-            bundle->addInstruction(new VanadisArm64Branch(addr, hw_thr, options, bit(ins, 24) ? "TBNZ" : "TBZ",
+            add(bundle, new VanadisArm64Branch(addr, hw_thr, options, bit(ins, 24) ? "TBNZ" : "TBZ",
                 bit(ins, 24) ? VanadisArm64BranchKind::TBNZ : VanadisArm64BranchKind::TBZ, off, b, true,
                 { rz(bits(ins, 4, 0)) }, {}));
             return true;
@@ -613,14 +635,14 @@ protected:
             // B.cond, BC.cond
             if ( bit(ins, 24) ) return false;
             const int64_t off = sext(bits(ins, 23, 5), 19) * 4;
-            bundle->addInstruction(new VanadisArm64Branch(addr, hw_thr, options, "B.cond",
+            add(bundle, new VanadisArm64Branch(addr, hw_thr, options, "B.cond",
                 VanadisArm64BranchKind::COND, off, bits(ins, 3, 0), true, { A64Reg::NZCV }, {}));
             return true;
         }
         if ( bits(ins, 31, 24) == 0b11010100 ) {
             // exception generation: only SVC #imm is an EL0 call here; the others fault.
             if ( bits(ins, 23, 21) == 0 && bits(ins, 4, 0) == 1 ) {
-                bundle->addInstruction(new VanadisSysCallInstruction(addr, hw_thr, options));
+                add(bundle, new VanadisSysCallInstruction(addr, hw_thr, options));
                 return true;
             }
             return false;
@@ -632,12 +654,12 @@ protected:
             if ( op2 != 0b11111 || op3 != 0 || op4 != 0 ) return false;
             const uint32_t rn = bits(ins, 9, 5);
             if ( opc == 0 || opc == 2 ) {
-                bundle->addInstruction(new VanadisArm64Branch(addr, hw_thr, options, opc == 0 ? "BR" : "RET",
+                add(bundle, new VanadisArm64Branch(addr, hw_thr, options, opc == 0 ? "BR" : "RET",
                     VanadisArm64BranchKind::REG, 0, 0, true, { rz(rn) }, {}));
                 return true;
             }
             if ( opc == 1 ) {
-                bundle->addInstruction(new VanadisArm64Branch(addr, hw_thr, options, "BLR",
+                add(bundle, new VanadisArm64Branch(addr, hw_thr, options, "BLR",
                     VanadisArm64BranchKind::REG, 0, 0, true, { rz(rn) }, { 30 }));
                 return true;
             }
@@ -653,7 +675,7 @@ protected:
         const uint32_t op0 = bits(ins, 20, 19), op1 = bits(ins, 18, 16), crn = bits(ins, 15, 12), crm = bits(ins, 11, 8),
                        op2 = bits(ins, 7, 5), rt = bits(ins, 4, 0);
         auto nop = [&]() {
-            bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options));
+            add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
             return true;
         };
         if ( !L && op0 == 0 && crn == 0b0010 && rt == 31 ) {
@@ -672,7 +694,7 @@ protected:
                 const uint32_t domain_type = crm & 3;
                 if ( domain_type == 1 ) f = VANADIS_LOAD_FENCE;
                 else if ( domain_type == 2 ) f = VANADIS_STORE_FENCE;
-                bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, f));
+                add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, f));
                 return true;
             }
             default: return false;
@@ -707,7 +729,7 @@ protected:
         }, { rz(rt) }, { A64Reg::T0 });
         i->imm = dczid_block_bytes - 1;
         for ( uint32_t off = 0; off < dczid_block_bytes; off += 8 ) {
-            bundle->addInstruction(new VanadisStoreInstruction(addr, hw_thr, options, A64Reg::T0, off, A64Reg::ZR, 8,
+            add(bundle, new VanadisStoreInstruction(addr, hw_thr, options, A64Reg::T0, off, A64Reg::ZR, 8,
                 MEM_TRANSACTION_NONE, STORE_INT_REGISTER));
         }
         return true;
@@ -723,7 +745,7 @@ protected:
         };
         auto read_const = [&](const char* name, uint64_t v) {
             if ( rt == 31 ) {
-                bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options));
+                add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
             }
             else {
                 op(bundle, addr, name, INST_INT_ARITH, movImm, {}, { static_cast<uint16_t>(rt) })->imm = v;
@@ -732,7 +754,7 @@ protected:
         };
         if ( key == enc(3, 3, 4, 2, 0) ) {   // NZCV
             if ( L ) {
-                if ( rt == 31 ) { bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options)); return true; }
+                if ( rt == 31 ) { add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options)); return true; }
                 op(bundle, addr, "MRS.NZCV", INST_INT_ARITH, mrsNzcv, { A64Reg::NZCV }, { static_cast<uint16_t>(rt) });
             }
             else {
@@ -766,7 +788,7 @@ protected:
             case enc(3, 3, 14, 0, 5):        // CNTPCTSS_EL0
             case enc(3, 3, 14, 0, 6):        // CNTVCTSS_EL0
             {
-                if ( rt == 31 ) { bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options)); return true; }
+                if ( rt == 31 ) { add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options)); return true; }
                 auto* i = op(bundle, addr, "CNTVCT", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
                     o.setX(rf, 0, reinterpret_cast<const VanadisARM64Decoder*>(o.imm)->counterValue());
                 }, {}, { static_cast<uint16_t>(rt) });
@@ -784,19 +806,19 @@ protected:
     void loadInt(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t base, int64_t off, uint16_t target, uint32_t bytes,
         bool sign, VanadisMemoryTransaction type = MEM_TRANSACTION_NONE)
     {
-        bundle->addInstruction(new VanadisLoadInstruction(addr, hw_thr, options, base, off, target, bytes, sign, type, LOAD_INT_REGISTER));
+        add(bundle, new VanadisLoadInstruction(addr, hw_thr, options, base, off, target, bytes, sign, type, LOAD_INT_REGISTER));
     }
     void loadFp(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t base, int64_t off, uint16_t target, uint32_t bytes)
     {
-        bundle->addInstruction(new VanadisLoadInstruction(addr, hw_thr, options, base, off, target, bytes, false, MEM_TRANSACTION_NONE, LOAD_FP_REGISTER));
+        add(bundle, new VanadisLoadInstruction(addr, hw_thr, options, base, off, target, bytes, false, MEM_TRANSACTION_NONE, LOAD_FP_REGISTER));
     }
     void storeInt(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t base, int64_t off, uint16_t value, uint32_t bytes)
     {
-        bundle->addInstruction(new VanadisStoreInstruction(addr, hw_thr, options, base, off, value, bytes, MEM_TRANSACTION_NONE, STORE_INT_REGISTER));
+        add(bundle, new VanadisStoreInstruction(addr, hw_thr, options, base, off, value, bytes, MEM_TRANSACTION_NONE, STORE_INT_REGISTER));
     }
     void storeFp(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t base, int64_t off, uint16_t value, uint32_t bytes)
     {
-        bundle->addInstruction(new VanadisStoreInstruction(addr, hw_thr, options, base, off, value, bytes, MEM_TRANSACTION_NONE, STORE_FP_REGISTER));
+        add(bundle, new VanadisStoreInstruction(addr, hw_thr, options, base, off, value, bytes, MEM_TRANSACTION_NONE, STORE_FP_REGISTER));
     }
     void addImmTo(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t dst, uint16_t src, int64_t imm)
     {
@@ -829,7 +851,7 @@ protected:
         if ( opc == 2 ) {
             // PRFM at size 3 is a no-op; LDRSB, LDRSH, LDRSW to an X register otherwise.
             if ( size == 3 ) {
-                bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options));
+                add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
                 return true;
             }
             loadInt(bundle, addr, base, off, target, bytes, true);
@@ -874,7 +896,7 @@ protected:
                 return true;
             }
             if ( opc == 3 ) {   // PRFM literal
-                bundle->addInstruction(new VanadisNoOpInstruction(addr, hw_thr, options));
+                add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
                 return true;
             }
             op(bundle, addr, "LITADDR", INST_INT_ARITH, movImm, {}, { A64Reg::T0 })->imm = target;
@@ -996,12 +1018,12 @@ protected:
             }
             if ( L ) {   // LDXR, LDAXR
                 loadInt(bundle, addr, base, 0, target, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
-                if ( o0 ) bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+                if ( o0 ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
                 return true;
             }
             // STXR, STLXR
-            if ( o0 ) bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
-            bundle->addInstruction(new VanadisStoreConditionalInstruction(addr, hw_thr, options, base, 0, rz(rt),
+            if ( o0 ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+            add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, base, 0, rz(rt),
                 rs_ == 31 ? A64Reg::T2 : static_cast<uint16_t>(rs_), bytes, STORE_INT_REGISTER, 0, 1));
             return true;
         }
@@ -1011,11 +1033,11 @@ protected:
         }
         if ( L ) {   // LDAR, LDLAR
             loadInt(bundle, addr, base, 0, target, bytes, false);
-            bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+            add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
             return true;
         }
         // STLR, STLLR
-        bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         storeInt(bundle, addr, base, 0, rz(rt), bytes);
         return true;
     }
@@ -1028,7 +1050,7 @@ protected:
         const bool     L = bit(ins, 22), o0 = bit(ins, 15);
         const uint32_t elem = 1u << size;
         if ( L ) {
-            bundle->addInstruction(new VanadisLoadInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0, elem * 2, false,
+            add(bundle, new VanadisLoadInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0, elem * 2, false,
                 MEM_TRANSACTION_LLSC_LOAD, LOAD_FP_REGISTER));
             std::vector<uint16_t> out = dz(rt);
             for ( auto r : dz(rt2) ) out.push_back(r);
@@ -1043,10 +1065,10 @@ protected:
             }, {}, out, { A64Reg::VT0 });
             i->c = elem;
             i->a = (rt != 31 ? 1 : 0) | (rt2 != 31 ? 2 : 0);
-            if ( o0 ) bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+            if ( o0 ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
             return true;
         }
-        if ( o0 ) bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( o0 ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         auto* i = op(bundle, addr, "JOINPAIR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
             const uint64_t lo = o.X(rf, 0), hi = o.X(rf, 1);
             uint8_t* v = o.Vout(rf, 0);
@@ -1054,7 +1076,7 @@ protected:
             std::memcpy(v + o.c, &hi, o.c);
         }, { rz(rt), rz(rt2) }, {}, {}, { A64Reg::VT0 });
         i->c = elem;
-        bundle->addInstruction(new VanadisStoreConditionalInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0,
+        add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0,
             rs_ == 31 ? A64Reg::T2 : static_cast<uint16_t>(rs_), elem * 2, STORE_FP_REGISTER, 0, 1));
         return true;
     }
@@ -1062,9 +1084,9 @@ protected:
     // The tail of a read-modify-write: store T2 conditionally, replay the instruction if it failed.
     void rmwStoreAndRetry(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t base, uint32_t bytes)
     {
-        bundle->addInstruction(new VanadisStoreConditionalInstruction(addr, hw_thr, options, base, 0, A64Reg::T2, A64Reg::T3, bytes,
+        add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, base, 0, A64Reg::T2, A64Reg::T3, bytes,
             STORE_INT_REGISTER, 0, 1));
-        bundle->addInstruction(new VanadisArm64Branch(addr, hw_thr, options, "RMWRETRY", VanadisArm64BranchKind::CBNZ, 0, 0, true,
+        add(bundle, new VanadisArm64Branch(addr, hw_thr, options, "RMWRETRY", VanadisArm64BranchKind::CBNZ, 0, 0, true,
             { A64Reg::T3 }, {}));
     }
 
@@ -1074,12 +1096,12 @@ protected:
         const uint32_t size = bits(ins, 31, 30), rs_ = bits(ins, 20, 16), rn = bits(ins, 9, 5), rt = bits(ins, 4, 0);
         const bool     A = bit(ins, 22), R = bit(ins, 15);
         const uint32_t bytes = 1u << size;
-        if ( R ) bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         loadInt(bundle, addr, rs(rn), 0, A64Reg::T1, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
         op(bundle, addr, "CASVAL", INST_INT_ARITH, casValue, { A64Reg::T1, rz(rs_), rz(rt) }, { A64Reg::T2 })->c = bytes;
         rmwStoreAndRetry(bundle, addr, rs(rn), bytes);
         if ( rs_ != 31 ) op(bundle, addr, "CASRES", INST_INT_ARITH, zeroExtendTo, { A64Reg::T1 }, { static_cast<uint16_t>(rs_) })->c = bytes;
-        if ( A ) bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( A ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         return true;
     }
 
@@ -1090,8 +1112,8 @@ protected:
         const bool     sz = bit(ins, 30), A = bit(ins, 22), R = bit(ins, 15);
         if ( bit(ins, 31) || (rs_ & 1) || (rt & 1) || bits(ins, 14, 10) != 31 ) return false;
         const uint32_t elem = sz ? 8 : 4;
-        if ( R ) bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
-        bundle->addInstruction(new VanadisLoadInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0, elem * 2, false,
+        if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        add(bundle, new VanadisLoadInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0, elem * 2, false,
             MEM_TRANSACTION_LLSC_LOAD, LOAD_FP_REGISTER));
         // New value of the pair in VT1: Rt,Rt+1 when the memory equals Rs,Rs+1, else the memory unchanged.
         auto* i = op(bundle, addr, "CASPVAL", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
@@ -1112,9 +1134,9 @@ protected:
             }
         }, { rz(rs_), rz(rs_ + 1), rz(rt), rz(rt + 1) }, {}, { A64Reg::VT0 }, { A64Reg::VT1 });
         i->c = elem;
-        bundle->addInstruction(new VanadisStoreConditionalInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT1, A64Reg::T3,
+        add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT1, A64Reg::T3,
             elem * 2, STORE_FP_REGISTER, 0, 1));
-        bundle->addInstruction(new VanadisArm64Branch(addr, hw_thr, options, "RMWRETRY", VanadisArm64BranchKind::CBNZ, 0, 0, true,
+        add(bundle, new VanadisArm64Branch(addr, hw_thr, options, "RMWRETRY", VanadisArm64BranchKind::CBNZ, 0, 0, true,
             { A64Reg::T3 }, {}));
         std::vector<uint16_t> out = dz(rs_);
         for ( auto r : dz(rs_ + 1) ) out.push_back(r);
@@ -1129,7 +1151,7 @@ protected:
         }, {}, out, { A64Reg::VT0 });
         j->c = elem;
         j->a = (rs_ != 31 ? 1 : 0) | (rs_ + 1 != 31 ? 2 : 0);
-        if ( A ) bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( A ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         return true;
     }
 
@@ -1150,7 +1172,7 @@ protected:
             else if ( opc == 4 && A && !R && rs_ == 31 ) {
                 // LDAPR, LDAPRB, LDAPRH
                 loadInt(bundle, addr, rs(rn), 0, rt == 31 ? A64Reg::T1 : static_cast<uint16_t>(rt), bytes, false);
-                bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+                add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
                 return true;
             }
             else {
@@ -1160,14 +1182,14 @@ protected:
         else {
             kind = opc;
         }
-        if ( R ) bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         loadInt(bundle, addr, rs(rn), 0, A64Reg::T1, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
         auto* i = op(bundle, addr, "ATOMICOP", INST_INT_ARITH, atomicOp, { A64Reg::T1, rz(rs_) }, { A64Reg::T2 });
         i->b = kind;
         i->c = bytes;
         rmwStoreAndRetry(bundle, addr, rs(rn), bytes);
         if ( rt != 31 ) op(bundle, addr, "ATOMICRES", INST_INT_ARITH, zeroExtendTo, { A64Reg::T1 }, { static_cast<uint16_t>(rt) })->c = bytes;
-        if ( A ) bundle->addInstruction(new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( A ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         return true;
     }
 
