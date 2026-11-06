@@ -360,8 +360,8 @@ simdFcadd(VanadisArm64Inst& op, VanadisRegisterFile* rf)
         using T = decltype(zero);
         for ( unsigned e = 0; e < op.b / sizeof(T) / 2; ++e ) {
             T m0 = vget<T>(op.Vin(rf, 1), 2 * e), m1 = vget<T>(op.Vin(rf, 1), 2 * e + 1);
-            if ( op.d == 0 ) m0 = neg(m0);
-            else m1 = neg(m1);
+            if ( op.d == 0 ) m1 = neg(m1);
+            else m0 = neg(m0);
             vset<T>(r, 2 * e, add(vget<T>(op.Vin(rf, 0), 2 * e), m1, c));
             vset<T>(r, 2 * e + 1, add(vget<T>(op.Vin(rf, 0), 2 * e + 1), m0, c));
         }
@@ -459,7 +459,7 @@ simdBfDot(VanadisArm64Inst& op, VanadisRegisterFile* rf)
     writeLow(op, rf, 0, r, op.b);
 }
 
-// BFMMLA. Sources: Vn, Vm, Vd.
+// BFMMLA: BFMatMulAdd. Sources: Vn, Vm, Vd.
 inline void
 simdBfMmla(VanadisArm64Inst& op, VanadisRegisterFile* rf)
 {
@@ -468,30 +468,32 @@ simdBfMmla(VanadisArm64Inst& op, VanadisRegisterFile* rf)
     const uint8_t* vm = op.Vin(rf, 1);
     for ( unsigned i = 0; i < 2; ++i ) {
         for ( unsigned j = 0; j < 2; ++j ) {
-            const uint32_t prod = bfAdd(bfMul(vget<uint16_t>(vn, 4 * i), vget<uint16_t>(vm, 4 * j)),
-                bfMul(vget<uint16_t>(vn, 4 * i + 1), vget<uint16_t>(vm, 4 * j + 1)));
-            vset<uint32_t>(r, 2 * i + j, bfAdd(vget<uint32_t>(op.Vin(rf, 2), 2 * i + j), prod));
+            uint32_t sum = vget<uint32_t>(op.Vin(rf, 2), 2 * i + j);
+            for ( unsigned k = 0; k < 2; ++k ) {
+                const uint32_t prod = bfAdd(bfMul(vget<uint16_t>(vn, 4 * i + 2 * k), vget<uint16_t>(vm, 4 * j + 2 * k)),
+                    bfMul(vget<uint16_t>(vn, 4 * i + 2 * k + 1), vget<uint16_t>(vm, 4 * j + 2 * k + 1)));
+                sum = bfAdd(sum, prod);
+            }
+            vset<uint32_t>(r, 2 * i + j, sum);
         }
     }
     writeLow(op, rf, 0, r, 16);
 }
 
-// BFMLALB, BFMLALT: the fused multiply-add of FPCR-independent rounding (ties to even) and the default NaN.
+// BFMLALB, BFMLALT: BFMulAddH is FPMulAdd on the operands as singles, under the FPCR.
 // c: 0 bottom, 1 top. d & 1: indexed by imm. Sources: Vn, Vm, Vd.
 inline void
 simdBfMlal(VanadisArm64Inst& op, VanadisRegisterFile* rf)
 {
-    uint8_t        r[16];
-    FpCtx          c((static_cast<uint32_t>(op.X(rf, 0)) & ~(3u << 22)) | FPCR_DN);
-    c.fpcr &= ~FPCR_FZ16;
+    uint8_t r[16];
+    FpCtx   c(static_cast<uint32_t>(op.X(rf, 0)));
     for ( unsigned e = 0; e < 4; ++e ) {
         const uint16_t x = vget<uint16_t>(op.Vin(rf, 0), 2 * e + op.c);
         const uint16_t y = vget<uint16_t>(op.Vin(rf, 1), (op.d & 1) ? static_cast<unsigned>(op.imm) : 2 * e + op.c);
-        const uint32_t sx = (x & 0x7F80) == 0 ? (static_cast<uint32_t>(x & 0x8000) << 16) : (static_cast<uint32_t>(x) << 16);
-        const uint32_t sy = (y & 0x7F80) == 0 ? (static_cast<uint32_t>(y & 0x8000) << 16) : (static_cast<uint32_t>(y) << 16);
-        vset<uint32_t>(r, e, mulAdd(vget<uint32_t>(op.Vin(rf, 2), e), sx, sy, c));
+        vset<uint32_t>(r, e, mulAdd(vget<uint32_t>(op.Vin(rf, 2), e), static_cast<uint32_t>(x) << 16, static_cast<uint32_t>(y) << 16, c));
     }
     writeLow(op, rf, 0, r, 16);
+    op.fp_flags = c.flags;
 }
 
 // BFCVTN, BFCVTN2. d & 1 = Q. Source Vd when Q.

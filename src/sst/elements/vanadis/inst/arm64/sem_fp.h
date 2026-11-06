@@ -264,8 +264,7 @@ template <typename T>
 inline T
 abd(T a, T b, FpCtx& c)
 {
-    const T r = sub(a, b, c);
-    return isNaN(r) ? r : T(r & ~Fmt<T>::SIGN);
+    return T(sub(a, b, c) & ~Fmt<T>::SIGN);
 }
 
 template <typename T>
@@ -451,14 +450,15 @@ roundIntWidth(T a, Rounding r, bool exact, unsigned width, FpCtx& c)
         if ( isSNaN(a) || isNaN(a) || isInf(a) ) c.flags |= IOC;
         return neg_limit;
     }
+    // An out-of-range element reports IOC without IXC, and it keeps what the earlier elements of the vector reported.
+    const uint32_t saved_flags = c.flags;
     T res = roundInt(a, r, exact, c);
     if ( !isZero(res) ) {
         const int e = static_cast<int>((res & Fmt<T>::EXPM) >> Fmt<T>::FRAC) - Fmt<T>::BIAS;
         const bool too_big = sign(res) ? (e > static_cast<int>(width) - 1 || (e == static_cast<int>(width) - 1 && (res & Fmt<T>::FRACM)))
                                        : e >= static_cast<int>(width) - 1 + 0 && e > static_cast<int>(width) - 2;
         if ( too_big ) {
-            c.flags &= ~IXC;
-            c.flags |= IOC;
+            c.flags = saved_flags | IOC;
             return neg_limit;
         }
     }
@@ -780,12 +780,12 @@ inline T
 recipStep(T a, T b, FpCtx& c)
 {
     T out;
-    a = flushIn(a, c);
+    a = flushIn(neg(a), c);
     b = flushIn(b, c);
     if ( procNaNs(a, b, c, &out) ) return out;
     const T two = T(T(Fmt<T>::BIAS + 1) << Fmt<T>::FRAC);
     if ( (isInf(a) && isZero(b)) || (isZero(a) && isInf(b)) ) return two;
-    return mulAdd<T>(two, neg(a), b, c);
+    return mulAdd<T>(two, a, b, c);
 }
 
 template <typename T>
@@ -793,20 +793,20 @@ inline T
 rsqrtStep(T a, T b, FpCtx& c)
 {
     T out;
-    a = flushIn(a, c);
+    a = flushIn(neg(a), c);
     b = flushIn(b, c);
     if ( procNaNs(a, b, c, &out) ) return out;
     const T one_half = T((T(Fmt<T>::BIAS) << Fmt<T>::FRAC) | (T(1) << (Fmt<T>::FRAC - 1)));
     if ( (isInf(a) && isZero(b)) || (isZero(a) && isInf(b)) ) return one_half;
-    const T three = T((T(Fmt<T>::BIAS + 1) << Fmt<T>::FRAC) | (T(1) << (Fmt<T>::FRAC - 1)));
-    T       r = mulAdd<T>(three, neg(a), b, c);
-    if ( isNaN(r) || isInf(r) || isZero(r) ) return r;
-    // Divide by two through the exponent; the result of this fused step is not re-rounded.
-    const T e = T((r & Fmt<T>::EXPM) >> Fmt<T>::FRAC);
-    if ( e > 1 ) return T((r & ~Fmt<T>::EXPM) | (T(e - 1) << Fmt<T>::FRAC));
-    FpCtx half(c.fpcr);
-    const T two = T(T(Fmt<T>::BIAS + 1) << Fmt<T>::FRAC);
-    return div<T>(r, two, half);
+    if ( isInf(a) || isInf(b) ) return infinity<T>(sign(a) != sign(b));
+    // (3 + a * b) / 2 is rounded once: it equals 1.5 + (a / 2) * b, and halving an operand above the lowest exponent
+    // is exact. When neither operand can be halved exactly the product is far below one unit of 1.5, so the rounding
+    // of 1.5 + a * b is the same.
+    const auto halves = [](T v) { return ((v & Fmt<T>::EXPM) >> Fmt<T>::FRAC) > 1; };
+    const auto halved = [](T v) { return T(v - (T(1) << Fmt<T>::FRAC)); };
+    if ( halves(a) ) a = halved(a);
+    else if ( halves(b) ) b = halved(b);
+    return mulAdd<T>(one_half, a, b, c);
 }
 
 } // namespace A64Fp

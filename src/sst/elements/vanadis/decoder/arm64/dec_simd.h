@@ -35,10 +35,10 @@ VanadisARM64Decoder::decodeAdvSimd(uint64_t addr, uint32_t ins, VanadisInstructi
             if ( b10 ) return !bit(ins, 23) && decodeSimdShiftImm(addr, ins, bundle, true);
             return decodeSimdIndexed(addr, ins, bundle, true);
         }
+        if ( bits(ins, 22, 17) == 0b111100 && lo2 == 2 ) return decodeSimdMiscFp16(addr, ins, bundle, true);
         if ( !b21 ) {
             if ( bits(ins, 23, 21) == 0 && !b15 && b10 ) return decodeSimdCopy(addr, ins, bundle, true);
             if ( bits(ins, 22, 21) == 0b10 && bits(ins, 15, 14) == 0 && b10 ) return decodeSimdThreeSameFp16(addr, ins, bundle, true);
-            if ( bits(ins, 22, 17) == 0b111100 && lo2 == 2 ) return decodeSimdMiscFp16(addr, ins, bundle, true);
             if ( b15 && b10 ) return decodeSimdThreeExt(addr, ins, bundle, true);
             if ( !b15 && lo2 == 0 ) return decodeCryptoSha3Reg(addr, ins, bundle);
             return false;
@@ -63,10 +63,10 @@ VanadisARM64Decoder::decodeAdvSimd(uint64_t addr, uint32_t ins, VanadisInstructi
         return decodeSimdIndexed(addr, ins, bundle, false);
     }
     if ( top != 0b01110 ) return false;
+    if ( bits(ins, 22, 17) == 0b111100 && lo2 == 2 ) return decodeSimdMiscFp16(addr, ins, bundle, false);
     if ( !b21 ) {
         if ( bits(ins, 23, 21) == 0 && !b15 && b10 ) return decodeSimdCopy(addr, ins, bundle, false);
         if ( bits(ins, 22, 21) == 0b10 && bits(ins, 15, 14) == 0 && b10 ) return decodeSimdThreeSameFp16(addr, ins, bundle, false);
-        if ( bits(ins, 22, 17) == 0b111100 && lo2 == 2 ) return decodeSimdMiscFp16(addr, ins, bundle, false);
         if ( b15 && b10 ) return decodeSimdThreeExt(addr, ins, bundle, false);
         if ( !b15 && !b10 ) {
             if ( bit(ins, 29) ) return decodeSimdExt(addr, ins, bundle);
