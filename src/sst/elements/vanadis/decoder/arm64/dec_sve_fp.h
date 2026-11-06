@@ -195,8 +195,12 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         i->c = k;
         return true;
     }
-    if ( (ins & 0xFF3CE000) == 0x65002000 || (ins & 0xFF3EE000) == 0x65042000 + 0x00000000 ) {
-        // FADDV, FMAXNMV, FMINNMV, FMAXV, FMINV
+    if ( (ins & 0xFF3EFC00) == 0x650E3000 ) {
+        if ( size == 0 ) return false;
+        auto* i = op(bundle, addr, "FEST.Z", INST_FP_ARITH, estimateZ, { fpcr }, {}, { rn }, { rd });
+        i->a = size;
+        i->c = bit(ins, 16);
+        return true;
     }
     if ( b1513 == 1 ) {
         if ( size == 0 ) return false;
@@ -228,16 +232,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             i->d = 1;
             return true;
         }
-        if ( (ins & 0xFF3FFC00) == 0x650E3000 ) {}
-        // FRECPE, FRSQRTE (bits 12..10 = 100)
         return false;
-    }
-    if ( (ins & 0xFF3EFC00) == 0x650E3000 ) {
-        if ( size == 0 ) return false;
-        auto* i = op(bundle, addr, "FEST.Z", INST_FP_ARITH, estimateZ, { fpcr }, {}, { rn }, { rd });
-        i->a = size;
-        i->c = bit(ins, 16);
-        return true;
     }
     if ( b1513 == 2 || b1513 == 3 || b1513 == 6 || b1513 == 7 ) {
         // Compare vectors (bit 15:14 = 01 or 11, bit 13 selects)
@@ -312,11 +307,10 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             if ( size == 0 ) return false;
             return unary_like("FUN.Z", predFpUnary, size, k == 0x0C ? 8 : 9, 0);
         }
-        if ( (ins & 0xFFFDE000) == 0x6510A000 || (ins & 0xFFFDE000) == 0x6511A000 + 0 ) {}
-        if ( bits(ins, 20, 19) == 2 && (bits(ins, 23, 23) == 0) && (k == 0x10 || k == 0x11 || k == 0x14 || k == 0x15) ) {
-            // FRINT32, FRINT64: bit 22 selects D.
-            const uint32_t code = k == 0x10 ? 10 : k == 0x11 ? 11 : k == 0x14 ? 12 : 13;
-            return unary_like("FRINTN.Z", predFpUnary, bit(ins, 22) ? 3 : 2, code, 0);
+        if ( (ins & 0xFFF8E000) == 0x6510A000 ) {
+            // FRINT32Z, FRINT32X, FRINT64Z, FRINT64X: bit 18 = 64, bit 17 = D, bit 16 = X
+            const uint32_t code = (bit(ins, 18) ? 12u : 10u) + (bit(ins, 16) ? 1u : 0u);
+            return unary_like("FRINTN.Z", predFpUnary, bit(ins, 17) ? 3 : 2, code, 0);
         }
         if ( (ins & 0xFFF9E000) == 0x6518A000 ) {
             const uint32_t sz = bits(ins, 18, 17);

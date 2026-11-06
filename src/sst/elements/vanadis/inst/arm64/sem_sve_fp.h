@@ -424,7 +424,7 @@ inline void
 fpConvertZ(VanadisArm64Inst& op, VanadisRegisterFile* rf)
 {
     uint8_t        r[MAX_VL_BYTES];
-    FpCtx          c(static_cast<uint32_t>(op.X(rf, 0)));
+    FpCtx          c(static_cast<uint32_t>(op.X(rf, 0)) & ~FPCR_AHP);
     const unsigned vl = vlOf(rf), ebytes = 1u << op.a;
     std::memcpy(r, op.Vin(rf, 1), vl);
     for ( unsigned e = 0; e < vl / ebytes; ++e ) {
@@ -449,6 +449,7 @@ fpConvertZ(VanadisArm64Inst& op, VanadisRegisterFile* rf)
             default: out = convert<uint64_t>(static_cast<uint32_t>(raw), c); out_bytes = 8; break;
             }
         }
+        std::memset(d, 0, ebytes);
         std::memcpy(d, &out, out_bytes);
     }
     writeZ(op, rf, r);
@@ -464,7 +465,7 @@ bfConvertZ(VanadisArm64Inst& op, VanadisRegisterFile* rf)
     const unsigned vl = vlOf(rf);
     std::memcpy(r, op.Vin(rf, 1), vl);
     for ( unsigned e = 0; e < vl / 4; ++e ) {
-        if ( pbit(op.Vin(rf, 0), e * 4) ) vset<uint16_t>(r, 2 * e, bfConvert(vget<uint32_t>(op.Vin(rf, 2), e), c));
+        if ( pbit(op.Vin(rf, 0), e * 4) ) vset<uint32_t>(r, e, bfConvert(vget<uint32_t>(op.Vin(rf, 2), e), c));
     }
     writeZ(op, rf, r);
     op.fp_flags = c.flags;
@@ -515,6 +516,7 @@ fpToIntZ(VanadisArm64Inst& op, VanadisRegisterFile* rf)
                             : toInt<uint64_t, uint64_t>(raw, Rounding::ZERO, 0, c);
             break;
         }
+        std::memset(r + e * ebytes, 0, ebytes);
         std::memcpy(r + e * ebytes, &out, out_bytes);
     }
     writeZ(op, rf, r);
@@ -545,6 +547,7 @@ intToFpZ(VanadisArm64Inst& op, VanadisRegisterFile* rf)
         case 0x23: out = s ? fromInt<uint64_t, int32_t>(static_cast<int32_t>(raw), 0, c) : fromInt<uint64_t, uint32_t>(static_cast<uint32_t>(raw), 0, c); break;
         default: out = s ? fromInt<uint64_t, int64_t>(static_cast<int64_t>(raw), 0, c) : fromInt<uint64_t, uint64_t>(raw, 0, c); break;
         }
+        std::memset(r + e * ebytes, 0, ebytes);
         std::memcpy(r + e * ebytes, &out, out_bytes);
     }
     writeZ(op, rf, r);
@@ -800,7 +803,7 @@ inline void
 fpTopConvert(VanadisArm64Inst& op, VanadisRegisterFile* rf)
 {
     uint8_t        r[MAX_VL_BYTES];
-    FpCtx          c(static_cast<uint32_t>(op.X(rf, 0)));
+    FpCtx          c(static_cast<uint32_t>(op.X(rf, 0)) & ~FPCR_AHP);
     const unsigned vl = vlOf(rf), ebytes = 1u << op.a;
     std::memcpy(r, op.Vin(rf, 1), vl);
     for ( unsigned e = 0; e < vl / ebytes; ++e ) {

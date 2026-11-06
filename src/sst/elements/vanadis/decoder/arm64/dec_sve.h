@@ -728,7 +728,7 @@ VanadisARM64Decoder::decodeSveCompareAndPred(uint64_t addr, uint32_t ins, Vanadi
             i->d = sf ? 0 : 1;
             return true;
         }
-        if ( (ins & 0xFF20FC10) == 0x25203000 ) {
+        if ( (ins & 0xFF20FC00) == 0x25203000 ) {
             auto* i = op(bundle, addr, "WHILEW", INST_FP_ARITH, whileConflict, { rz(rn), rz(rm) }, { A64Reg::NZCV }, {}, { pd });
             i->a = size;
             i->c = b4;
