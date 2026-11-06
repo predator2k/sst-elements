@@ -17,7 +17,10 @@
 #define _H_VANADIS_ARM64_DECODER
 
 #include "decoder/vdecoder.h"
+#include "inst/arm64/sem_crypto.h"
 #include "inst/arm64/sem_fpscalar.h"
+#include "inst/arm64/sem_simd_fp.h"
+#include "inst/arm64/sem_simd_int.h"
 #include "inst/arm64/sem_int.h"
 #include "inst/arm64/varm64inst.h"
 #include "inst/vinstall.h"
@@ -1239,8 +1242,28 @@ protected:
     bool decodeFpSimd(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle)
     {
         if ( (bits(ins, 31, 28) & 0b0101) == 0b0001 ) return decodeFpScalar(addr, ins, bundle);
-        return false;
+        return decodeAdvSimd(addr, ins, bundle);
     }
+    bool decodeAdvSimd(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSimdThreeSame(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle, bool scalar);
+    bool decodeSimdThreeSameFp16(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle, bool scalar);
+    bool decodeSimdThreeExt(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle, bool scalar);
+    bool decodeSimdThreeDiff(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle, bool scalar);
+    bool decodeSimdMisc(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle, bool scalar);
+    bool decodeSimdMiscFp16(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle, bool scalar);
+    bool decodeSimdShiftImm(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle, bool scalar);
+    bool decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle, bool scalar);
+    bool decodeSimdCopy(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle, bool scalar);
+    bool decodeSimdModifiedImm(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSimdPermute(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSimdTable(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSimdExt(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSimdAcross(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSimdScalarPair(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeCryptoAes(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeCryptoSha3Reg(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeCryptoSha2Reg(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeCryptoHigh(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
     bool decodeSve(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle) { return false; }
     bool decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
     bool decodeSimdStructure(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
@@ -1299,5 +1322,6 @@ protected:
 } // namespace SST
 
 #include "decoder/arm64/dec_fpscalar.h"
+#include "decoder/arm64/dec_simd.h"
 
 #endif

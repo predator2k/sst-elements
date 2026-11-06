@@ -202,6 +202,10 @@ inst/arm64/sem_fp.h \
 inst/arm64/sem_simd.h \
 inst/arm64/sem_fpscalar.h \
 decoder/arm64/dec_fpscalar.h \
+decoder/arm64/dec_simd.h \
+inst/arm64/sem_crypto.h \
+inst/arm64/sem_simd_fp.h \
+inst/arm64/sem_simd_int.h \
 inst/fpregmode.h \
 inst/isatable.h \
 inst/regfile.h \
