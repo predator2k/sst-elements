@@ -64,7 +64,10 @@ public:
             isa_int_regs_in[0] = memoryAddr;
             isa_fp_regs_in[0]  = valueReg;
 
-            if ( MEM_TRANSACTION_LLSC_STORE == accessT ) { isa_fp_regs_out[0] = valueReg; }
+            // A store-conditional of a floating-point register (the 16-byte pair of A64 STXP and CASP) writes its
+            // result to an integer register; a class that derives from this one may give no FP destination, and
+            // the array is then empty (writing it corrupted the heap).
+            if ( MEM_TRANSACTION_LLSC_STORE == accessT && count_isa_fp_reg_out > 0 ) { isa_fp_regs_out[0] = valueReg; }
         } break;
         }
 
