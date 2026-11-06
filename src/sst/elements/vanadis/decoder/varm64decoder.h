@@ -1197,7 +1197,51 @@ protected:
     bool decodeFpSimd(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle) { return false; }
     bool decodeSve(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle) { return false; }
     bool decodeSimdStructure(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle) { return false; }
-    bool decodeFpSysReg(uint64_t addr, bool L, uint32_t key, uint32_t rt, VanadisInstructionBundle* bundle) { return false; }
+    // FPCR is a renamed integer-class register; FPSR is the thread's accumulated state, read and written at the
+    // front of the reorder buffer so every earlier instruction has added its flags.
+    VanadisArm64FpState fp_state_;
+
+    bool decodeFpSysReg(uint64_t addr, bool L, uint32_t key, uint32_t rt, VanadisInstructionBundle* bundle)
+    {
+        using namespace A64Sem;
+        constexpr uint32_t FPCR_KEY = (3u << 14) | (3u << 11) | (4u << 7) | (4u << 3) | 0u;
+        constexpr uint32_t FPSR_KEY = (3u << 14) | (3u << 11) | (4u << 7) | (4u << 3) | 1u;
+        // Writable FPCR bits: AHP, DN, FZ, RMode, FZ16 (and the trap enables, which this model never takes).
+        constexpr uint64_t FPCR_MASK = 0x07C89F00ull;
+        constexpr uint64_t FPSR_MASK = 0xF800009Full;
+        if ( key == FPCR_KEY ) {
+            if ( L ) {
+                if ( rt == 31 ) { add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options)); return true; }
+                auto* i = op(bundle, addr, "MRS.FPCR", INST_INT_ARITH, movReg, { A64Reg::FPCR }, { static_cast<uint16_t>(rt) });
+                i->a = 1; i->d = HAS_RD;
+            }
+            else {
+                auto* i = op(bundle, addr, "MSR.FPCR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+                    o.setX(rf, 0, o.X(rf, 0) & o.imm);
+                }, { rz(rt) }, { A64Reg::FPCR });
+                i->imm = FPCR_MASK;
+            }
+            return true;
+        }
+        if ( key == FPSR_KEY ) {
+            VanadisArm64Inst* i;
+            if ( L ) {
+                i = op(bundle, addr, "MRS.FPSR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+                    if ( o.countISAIntRegOut() ) o.setX(rf, 0, o.fp_state->fpsr);
+                }, {}, dz(rt));
+            }
+            else {
+                i = op(bundle, addr, "MSR.FPSR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+                    o.fp_state->fpsr = static_cast<uint32_t>(o.X(rf, 0) & o.imm);
+                }, { rz(rt) }, {});
+                i->imm = FPSR_MASK;
+            }
+            i->fp_state       = &fp_state_;
+            i->rob_front_only = true;
+            return true;
+        }
+        return false;
+    }
 };
 
 } // namespace Vanadis
