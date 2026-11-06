@@ -507,9 +507,9 @@ fpToIntZ(VanadisArm64Inst& op, VanadisRegisterFile* rf)
                             : toInt<uint32_t, uint64_t>(static_cast<uint32_t>(raw), Rounding::ZERO, 0, c);
             break;
         case 0x32:
-            out = is_signed ? static_cast<uint32_t>(toInt<uint64_t, int32_t>(raw, Rounding::ZERO, 0, c))
+            // A signed 32-bit result is sign-extended in its 64-bit container.
+            out = is_signed ? static_cast<uint64_t>(static_cast<int64_t>(toInt<uint64_t, int32_t>(raw, Rounding::ZERO, 0, c)))
                             : toInt<uint64_t, uint32_t>(raw, Rounding::ZERO, 0, c);
-            out_bytes = 4;
             break;
         default:
             out = is_signed ? static_cast<uint64_t>(toInt<uint64_t, int64_t>(raw, Rounding::ZERO, 0, c))
