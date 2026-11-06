@@ -174,8 +174,10 @@ VanadisNodeOSComponent::VanadisNodeOSComponent(SST::ComponentId_t id, SST::Param
     module_name += thread_map_.begin()->second->isELF32() ? "32" : "64";
     output_->verbose(CALL_INFO, 1, VANADIS_OS_DBG_INIT, "load app runtime memory module: %s\n",module_name.c_str());
 
-    Params not_used;
-    app_runtime_memory_ = loadModule<AppRuntimeMemoryMod>(module_name, not_used);
+    Params runtime_params;
+    runtime_params.insert("hwcap", params.find<std::string>("hwcap", "0"));
+    runtime_params.insert("hwcap2", params.find<std::string>("hwcap2", "0"));
+    app_runtime_memory_ = loadModule<AppRuntimeMemoryMod>(module_name, runtime_params);
 
     output_->verbose(CALL_INFO, 1, VANADIS_OS_DBG_INIT, "Configuring the memory interface...\n");
     mem_if_ = loadUserSubComponent<Interfaces::StandardMem>(

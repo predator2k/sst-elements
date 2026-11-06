@@ -40,7 +40,8 @@ public:
         decoder_opts(decoder_ots),
         fp_reg_mode(fp_rmode),
 		int_reg_width(8),
-		fp_reg_width( (fp_rmode == VANADIS_REGISTER_MODE_FP32) ? 4 : 8 )
+		fp_reg_width( (decoder_ots && decoder_ots->getFPRegWidthBytes()) ? decoder_ots->getFPRegWidthBytes() :
+			((fp_rmode == VANADIS_REGISTER_MODE_FP32) ? 4 : 8) )
     {
         // Int registers are always 64-bits
 

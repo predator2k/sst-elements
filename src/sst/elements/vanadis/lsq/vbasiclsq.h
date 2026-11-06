@@ -488,13 +488,16 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
 
                         assert((reg_offset + addr_offset + ev->size) <= reg_width);
 
-                        for(auto i = reg_offset + addr_offset; i < ev->size; ++i) {
+                        for(auto i = 0; i < ev->size; ++i) {
                             register_value.at(reg_offset + addr_offset + i) = ev->data[i];
                         }
 
-                        if(load_entry->countRequests() == 1) {
-                            for(auto i = reg_offset + addr_offset + load_width; i < reg_width; ++i) {
-                                register_value.at(i) = 0xff;
+                        // The bytes above the data: NaN boxing on RISC-V, zero on A64. A load that writes
+                        // part of a register (register offset above zero) leaves them alone.
+                        if(reg_offset == 0) {
+                            const uint8_t fill = load_ins->getISAOptions()->getFPLoadFillByte();
+                            for(auto i = load_width; i < reg_width; ++i) {
+                                register_value.at(i) = fill;
                             }
                         }
 

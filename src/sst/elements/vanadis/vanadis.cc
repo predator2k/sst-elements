@@ -19,6 +19,7 @@
 #include "inst/vinstall.h"
 #include "velf/velfinfo.h"
 #include "decoder/vriscv64decoder.h"
+#include "decoder/varm64decoder.h"
 
 #include "os/resp/vosexitresp.h"
 

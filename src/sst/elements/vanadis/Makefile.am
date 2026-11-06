@@ -20,6 +20,10 @@ decoder/vmipsdecoder.h \
 decoder/vmipsdecoder.cc\
 decoder/vriscv64decoder.h \
 decoder/vriscv64decoder.cc \
+decoder/varm64decoder.h \
+decoder/varm64decoder.cc \
+inst/arm64/varm64inst.h \
+inst/arm64/sem_int.h \
 inst/fpregmode.h \
 inst/isatable.h \
 inst/regfile.h \
@@ -144,6 +148,7 @@ os/voscallev.h \
 os/voscallfunc.h \
 os/vphysmemmanager.h \
 os/vriscvcpuos.h \
+os/varm64cpuos.h \
 os/vstartthreadreq.h \
 os/vosDbgFlags.h \
 \

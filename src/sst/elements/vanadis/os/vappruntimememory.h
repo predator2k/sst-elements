@@ -52,10 +52,16 @@ class AppRuntimeMemoryMod : public Module {
 template<class Type>
 class AppRuntimeMemory : public AppRuntimeMemoryMod {
   public:
-    AppRuntimeMemory( Params& params ) { }
+    AppRuntimeMemory( Params& params ) {
+        hwcap_  = params.find<uint64_t>("hwcap", 0);
+        hwcap2_ = params.find<uint64_t>("hwcap2", 0);
+    }
     virtual uint64_t configurePhdr(  Output* output, int page_size, OS::ProcessInfo*, uint64_t phdr_address, std::vector<uint8_t>& phdr_data_block );
     virtual uint64_t configureStack(  Output* output, int page_size, OS::ProcessInfo*, uint64_t start_top_address,
         uint64_t phdr_address, uint64_t rand_values_address, std::vector<uint8_t>& stack_data );
+  private:
+    uint64_t hwcap_ = 0;
+    uint64_t hwcap2_ = 0;
 };
 
 class AppRuntimeMemory32 : public AppRuntimeMemory<uint32_t> {
@@ -323,9 +329,11 @@ uint64_t AppRuntimeMemory<Type>::configureStack(  Output* output, int page_size,
     vanadis_vec_copy_in<Type>(aux_data_block, VANADIS_AT_FLAGS);
     vanadis_vec_copy_in<Type>(aux_data_block, 0);
 
-    // AT_HWCAP
+    // AT_HWCAP and AT_HWCAP2: the ISA features the OS reports (0 unless the configuration gives them)
     vanadis_vec_copy_in<Type>(aux_data_block, VANADIS_AT_HWCAP);
-    vanadis_vec_copy_in<Type>(aux_data_block, 0);
+    vanadis_vec_copy_in<Type>(aux_data_block, static_cast<Type>(hwcap_));
+    vanadis_vec_copy_in<Type>(aux_data_block, VANADIS_AT_HWCAP2);
+    vanadis_vec_copy_in<Type>(aux_data_block, static_cast<Type>(hwcap2_));
 
     // AT_CLKTCK (Clock Tick Resolution)
     vanadis_vec_copy_in<Type>(aux_data_block, VANADIS_AT_CLKTCK);

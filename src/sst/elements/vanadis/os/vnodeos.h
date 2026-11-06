@@ -64,6 +64,8 @@ public:
         { "program_header_address", "Program header address", "0x60000000" },
         { "processDebugLevel", "Debug level (verbosity) for process debug output", "0" },
         { "physMemSize", "Size of available physical memory in bytes, with units. Ex: 2GiB", NULL },
+        { "hwcap", "AT_HWCAP value of the auxiliary vector (the ISA features the OS reports)", "0" },
+        { "hwcap2", "AT_HWCAP2 value of the auxiliary vector", "0" },
         { "page_size", "Size of a page, in bytes", "4096" },
         { "useMMU", "Whether an MMU subcomponent is being used.", "False" },
         { "process%(processnum)d.env_count", "Number of environment variables to pass to the process", "0"},

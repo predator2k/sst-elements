@@ -27,7 +27,7 @@ namespace Vanadis {
 
 enum VanadisELFEndianness { VANADIS_LITTLE_ENDIAN, VANADIS_BIG_ENDIAN };
 
-enum VanadisELFISA { ISA_X86, ISA_MIPS, ISA_AMD64, ISA_RISC_V, ISA_UNKNOWN };
+enum VanadisELFISA { ISA_X86, ISA_MIPS, ISA_AMD64, ISA_RISC_V, ISA_ARM64, ISA_UNKNOWN };
 
 enum VanadisELFOSABI { OS_ABI_LINUX, OS_ABI_SYS_V, OS_ABI_UNKNOWN };
 
@@ -153,6 +153,8 @@ getELFISAString(VanadisELFISA isa) {
         return "MIPS";
     case ISA_AMD64:
         return "AMD64";
+    case ISA_ARM64:
+        return "ARM64";
     case ISA_RISC_V:
         return "RISC-V";
     default:
@@ -526,6 +528,8 @@ public:
             return ISA_AMD64;
         case 0xF3:
             return ISA_RISC_V;
+        case 0xB7:
+            return ISA_ARM64;
         default:
             return ISA_UNKNOWN;
         }

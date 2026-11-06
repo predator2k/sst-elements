@@ -50,7 +50,9 @@ struct new_utsname {
         const char* version = "#1 Wed Sep 2 23:59:59 MST 2020";
         std::string machine;
 
-        if ( VanadisOSBitType::VANADIS_OS_64B == event->getOSBitType() ) {
+        if ( process->getElfInfo()->getISA() == ISA_ARM64 ) {
+            machine.assign( "aarch64" );
+        } else if ( VanadisOSBitType::VANADIS_OS_64B == event->getOSBitType() ) {
             machine.assign( "riscv64" );
         } else {
             machine.assign( "mips" );
