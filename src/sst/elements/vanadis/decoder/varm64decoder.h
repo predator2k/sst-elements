@@ -123,6 +123,11 @@ public:
             if ( ins_loader->hasBundleAt(ip) ) {
                 stat_uop_hit->addData(1);
                 VanadisInstructionBundle* bundle = ins_loader->getBundleAt(ip);
+                // A bundle that can never fit would stall the core for ever: an SVE store has one micro-op per element.
+                if ( bundle->getInstructionCount() >= thread_rob->capacity() ) {
+                    output_->fatal(CALL_INFO, -1, "The instruction at 0x%" PRI_ADDR " has %" PRIu32 " micro-ops; reorder_slots (%" PRIu64 ") must be larger.\n",
+                        ip, static_cast<uint32_t>(bundle->getInstructionCount()), static_cast<uint64_t>(thread_rob->capacity()));
+                }
                 if ( bundle->getInstructionCount() < (thread_rob->capacity() - thread_rob->size()) ) {
                     bool bundle_has_branch = false;
                     for ( uint32_t i = 0; i < bundle->getInstructionCount(); ++i ) {
