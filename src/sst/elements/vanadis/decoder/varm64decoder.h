@@ -226,6 +226,7 @@ protected:
     {
         flushPending(bundle);
         pending_ = new VanadisArm64Inst(addr, hw_thr, options, name, unit, fn, in, out, fin, fout);
+        pending_->fp_state = &fp_state_;
         return pending_;
     }
 
