@@ -1,0 +1,3 @@
+Berkeley SoftFloat Release 3e (https://github.com/ucb-bar/berkeley-softfloat-3, commit 07ebd29), BSD-3-Clause,
+see COPYING.txt. Only the 16-, 32- and 64-bit formats and the ARM-VFPv2 specialization are kept; platform.h is
+written for this element. Used by the A64 floating-point semantic functions (inst/arm64/sem_fp.h).

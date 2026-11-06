@@ -32,8 +32,10 @@ namespace Vanadis {
 // Integer class: X0 to X30 keep their numbers; SP is 31. XZR has no number of its own in a source
 // position: a source that reads XZR names ZR, a register no instruction writes, so it stays zero. A
 // destination that writes XZR is left out of the instruction. NZCV is one renamed register whose
-// bits 31 to 28 are N, Z, C and V, the layout of MRS NZCV. TPIDR_EL0 is renamed like a GPR, and T0 to
-// T4 are the decoder's temporaries.
+// bits 31 to 28 are N, Z, C and V, the layout of MRS NZCV. TPIDR_EL0 is renamed like a GPR. FPCR is a
+// renamed register too, and every floating-point micro-op reads it: a write is rare and reads do not
+// serialize, so an instruction after MSR FPCR sees the new mode wherever it executes. T0 to T4 are the
+// decoder's temporaries.
 //
 // Floating-point class: its width is the SVE vector length in bytes (at least 16). Z0 to Z31 keep
 // their numbers, and V<n> is the low 128 bits of Z<n>. P0 to P15 and FFR are in the same class: a
@@ -44,12 +46,13 @@ constexpr uint16_t SP        = 31;
 constexpr uint16_t NZCV      = 32;
 constexpr uint16_t TPIDR     = 33;
 constexpr uint16_t ZR        = 34;
-constexpr uint16_t T0        = 35;
-constexpr uint16_t T1        = 36;
-constexpr uint16_t T2        = 37;
-constexpr uint16_t T3        = 38;
-constexpr uint16_t T4        = 39;
-constexpr uint16_t INT_COUNT = 40;
+constexpr uint16_t FPCR      = 35;
+constexpr uint16_t T0        = 36;
+constexpr uint16_t T1        = 37;
+constexpr uint16_t T2        = 38;
+constexpr uint16_t T3        = 39;
+constexpr uint16_t T4        = 40;
+constexpr uint16_t INT_COUNT = 41;
 
 constexpr uint16_t P0        = 32;
 constexpr uint16_t FFR       = 48;
@@ -70,6 +73,13 @@ constexpr uint64_t Z = 1ull << 30;
 constexpr uint64_t C = 1ull << 29;
 constexpr uint64_t V = 1ull << 28;
 } // namespace A64Flag
+
+// The FPSR cumulative bits of one hardware thread. They change only at retirement (updateFPFlags), so MRS
+// FPSR and MSR FPSR run at the front of the reorder buffer.
+struct VanadisArm64FpState
+{
+    uint32_t fpsr = 0;
+};
 
 // One AArch64 micro-op. The instruction classes of the other ISAs have one class per operation; A64,
 // AdvSIMD and SVE together have about 2,000 encoding groups, so this ISA has one class that holds a
@@ -114,9 +124,13 @@ public:
 
     void scalarExecute(SST::Output* output, VanadisRegisterFile* regFile) override
     {
+        if ( rob_front_only && !checkFrontOfROB() ) return;
         fn(*this, regFile);
         markExecuted();
     }
+
+    bool updatesFPFlags() const override { return fp_flags != 0; }
+    void updateFPFlags() override { fp_state->fpsr |= fp_flags; }
 
     // Integer source and destination by position.
     uint64_t X(VanadisRegisterFile* rf, uint16_t pos) const { return rf->getIntReg<uint64_t>(phys_int_regs_in[pos]); }
@@ -139,6 +153,12 @@ public:
     uint32_t b    = 0;
     uint32_t c    = 0;
     uint32_t d    = 0;
+
+    // FPSR bits this instruction accumulates at retirement, the thread's FPSR, and whether the micro-op
+    // must wait for the front of the reorder buffer.
+    uint32_t             fp_flags       = 0;
+    VanadisArm64FpState* fp_state       = nullptr;
+    bool                 rob_front_only = false;
 
 protected:
     const char*               name;

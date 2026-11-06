@@ -7,6 +7,200 @@ AM_CPPFLAGS += \
 	-I$(top_srcdir)/src
 
 compdir = $(pkglibdir)
+noinst_LTLIBRARIES = libvanadissoftfloat.la
+libvanadissoftfloat_la_SOURCES = \
+softfloat/source/bf16_add.c \
+softfloat/source/bf16_div.c \
+softfloat/source/bf16_eq.c \
+softfloat/source/bf16_isSignalingNaN.c \
+softfloat/source/bf16_le.c \
+softfloat/source/bf16_lt.c \
+softfloat/source/bf16_mul.c \
+softfloat/source/bf16_mulAdd.c \
+softfloat/source/bf16_sqrt.c \
+softfloat/source/bf16_sub.c \
+softfloat/source/bf16_to_f32.c \
+softfloat/source/bf16_to_f64.c \
+softfloat/source/bf16_to_i32.c \
+softfloat/source/bf16_to_ui32.c \
+softfloat/source/f16_add.c \
+softfloat/source/f16_div.c \
+softfloat/source/f16_eq.c \
+softfloat/source/f16_eq_signaling.c \
+softfloat/source/f16_isSignalingNaN.c \
+softfloat/source/f16_le.c \
+softfloat/source/f16_le_quiet.c \
+softfloat/source/f16_lt.c \
+softfloat/source/f16_lt_quiet.c \
+softfloat/source/f16_mul.c \
+softfloat/source/f16_mulAdd.c \
+softfloat/source/f16_rem.c \
+softfloat/source/f16_roundToInt.c \
+softfloat/source/f16_sqrt.c \
+softfloat/source/f16_sub.c \
+softfloat/source/f16_to_f32.c \
+softfloat/source/f16_to_f64.c \
+softfloat/source/f16_to_i32.c \
+softfloat/source/f16_to_i32_r_minMag.c \
+softfloat/source/f16_to_i64.c \
+softfloat/source/f16_to_i64_r_minMag.c \
+softfloat/source/f16_to_ui32.c \
+softfloat/source/f16_to_ui32_r_minMag.c \
+softfloat/source/f16_to_ui64.c \
+softfloat/source/f16_to_ui64_r_minMag.c \
+softfloat/source/f32_add.c \
+softfloat/source/f32_div.c \
+softfloat/source/f32_eq.c \
+softfloat/source/f32_eq_signaling.c \
+softfloat/source/f32_isSignalingNaN.c \
+softfloat/source/f32_le.c \
+softfloat/source/f32_le_quiet.c \
+softfloat/source/f32_lt.c \
+softfloat/source/f32_lt_quiet.c \
+softfloat/source/f32_mul.c \
+softfloat/source/f32_mulAdd.c \
+softfloat/source/f32_rem.c \
+softfloat/source/f32_roundToInt.c \
+softfloat/source/f32_sqrt.c \
+softfloat/source/f32_sub.c \
+softfloat/source/f32_to_bf16.c \
+softfloat/source/f32_to_f16.c \
+softfloat/source/f32_to_f64.c \
+softfloat/source/f32_to_i32.c \
+softfloat/source/f32_to_i32_r_minMag.c \
+softfloat/source/f32_to_i64.c \
+softfloat/source/f32_to_i64_r_minMag.c \
+softfloat/source/f32_to_ui32.c \
+softfloat/source/f32_to_ui32_r_minMag.c \
+softfloat/source/f32_to_ui64.c \
+softfloat/source/f32_to_ui64_r_minMag.c \
+softfloat/source/f64_add.c \
+softfloat/source/f64_div.c \
+softfloat/source/f64_eq.c \
+softfloat/source/f64_eq_signaling.c \
+softfloat/source/f64_isSignalingNaN.c \
+softfloat/source/f64_le.c \
+softfloat/source/f64_le_quiet.c \
+softfloat/source/f64_lt.c \
+softfloat/source/f64_lt_quiet.c \
+softfloat/source/f64_mul.c \
+softfloat/source/f64_mulAdd.c \
+softfloat/source/f64_rem.c \
+softfloat/source/f64_roundToInt.c \
+softfloat/source/f64_sqrt.c \
+softfloat/source/f64_sub.c \
+softfloat/source/f64_to_bf16.c \
+softfloat/source/f64_to_f16.c \
+softfloat/source/f64_to_f32.c \
+softfloat/source/f64_to_i32.c \
+softfloat/source/f64_to_i32_r_minMag.c \
+softfloat/source/f64_to_i64.c \
+softfloat/source/f64_to_i64_r_minMag.c \
+softfloat/source/f64_to_ui32.c \
+softfloat/source/f64_to_ui32_r_minMag.c \
+softfloat/source/f64_to_ui64.c \
+softfloat/source/f64_to_ui64_r_minMag.c \
+softfloat/source/i32_to_bf16.c \
+softfloat/source/i32_to_f16.c \
+softfloat/source/i32_to_f32.c \
+softfloat/source/i32_to_f64.c \
+softfloat/source/i64_to_f16.c \
+softfloat/source/i64_to_f32.c \
+softfloat/source/i64_to_f64.c \
+softfloat/source/s_add128.c \
+softfloat/source/s_addMagsExtF80.c \
+softfloat/source/s_addMagsF128.c \
+softfloat/source/s_addMagsF16.c \
+softfloat/source/s_addMagsF32.c \
+softfloat/source/s_addMagsF64.c \
+softfloat/source/s_approxRecip32_1.c \
+softfloat/source/s_approxRecipSqrt32_1.c \
+softfloat/source/s_approxRecipSqrt_1Ks.c \
+softfloat/source/s_approxRecip_1Ks.c \
+softfloat/source/s_countLeadingZeros16.c \
+softfloat/source/s_countLeadingZeros32.c \
+softfloat/source/s_countLeadingZeros64.c \
+softfloat/source/s_countLeadingZeros8.c \
+softfloat/source/s_eq128.c \
+softfloat/source/s_le128.c \
+softfloat/source/s_lt128.c \
+softfloat/source/s_mul128By32.c \
+softfloat/source/s_mul64ByShifted32To128.c \
+softfloat/source/s_mul64To128.c \
+softfloat/source/s_mulAddF128.c \
+softfloat/source/s_mulAddF16.c \
+softfloat/source/s_mulAddF32.c \
+softfloat/source/s_mulAddF64.c \
+softfloat/source/s_normRoundPackToExtF80.c \
+softfloat/source/s_normRoundPackToF128.c \
+softfloat/source/s_normRoundPackToF16.c \
+softfloat/source/s_normRoundPackToF32.c \
+softfloat/source/s_normRoundPackToF64.c \
+softfloat/source/s_normSubnormalBF16Sig.c \
+softfloat/source/s_normSubnormalExtF80Sig.c \
+softfloat/source/s_normSubnormalF128Sig.c \
+softfloat/source/s_normSubnormalF16Sig.c \
+softfloat/source/s_normSubnormalF32Sig.c \
+softfloat/source/s_normSubnormalF64Sig.c \
+softfloat/source/s_remStepMBy32.c \
+softfloat/source/s_roundMToI64.c \
+softfloat/source/s_roundMToUI64.c \
+softfloat/source/s_roundPackToBF16.c \
+softfloat/source/s_roundPackToExtF80.c \
+softfloat/source/s_roundPackToF128.c \
+softfloat/source/s_roundPackToF16.c \
+softfloat/source/s_roundPackToF32.c \
+softfloat/source/s_roundPackToF64.c \
+softfloat/source/s_roundToI32.c \
+softfloat/source/s_roundToI64.c \
+softfloat/source/s_roundToUI32.c \
+softfloat/source/s_roundToUI64.c \
+softfloat/source/s_shiftRightJam128.c \
+softfloat/source/s_shiftRightJam128Extra.c \
+softfloat/source/s_shiftRightJam32.c \
+softfloat/source/s_shiftRightJam64.c \
+softfloat/source/s_shiftRightJam64Extra.c \
+softfloat/source/s_shortShiftLeft128.c \
+softfloat/source/s_shortShiftRight128.c \
+softfloat/source/s_shortShiftRightJam128.c \
+softfloat/source/s_shortShiftRightJam128Extra.c \
+softfloat/source/s_shortShiftRightJam64.c \
+softfloat/source/s_shortShiftRightJam64Extra.c \
+softfloat/source/s_sub128.c \
+softfloat/source/s_subMagsExtF80.c \
+softfloat/source/s_subMagsF128.c \
+softfloat/source/s_subMagsF16.c \
+softfloat/source/s_subMagsF32.c \
+softfloat/source/s_subMagsF64.c \
+softfloat/source/softfloat_state.c \
+softfloat/source/ui32_to_bf16.c \
+softfloat/source/ui32_to_f16.c \
+softfloat/source/ui32_to_f32.c \
+softfloat/source/ui32_to_f64.c \
+softfloat/source/ui64_to_f16.c \
+softfloat/source/ui64_to_f32.c \
+softfloat/source/ui64_to_f64.c \
+softfloat/specialize/s_commonNaNToF16UI.c \
+softfloat/specialize/s_commonNaNToF32UI.c \
+softfloat/specialize/s_commonNaNToF64UI.c \
+softfloat/specialize/s_f16UIToCommonNaN.c \
+softfloat/specialize/s_f32UIToCommonNaN.c \
+softfloat/specialize/s_f64UIToCommonNaN.c \
+softfloat/specialize/s_propagateNaNF16UI.c \
+softfloat/specialize/s_propagateNaNF32UI.c \
+softfloat/specialize/s_propagateNaNF64UI.c \
+softfloat/specialize/softfloat_raiseFlags.c \
+softfloat/include/internals.h \
+softfloat/include/opts-GCC.h \
+softfloat/include/platform.h \
+softfloat/include/primitiveTypes.h \
+softfloat/include/primitives.h \
+softfloat/include/softfloat.h \
+softfloat/include/softfloat_types.h \
+softfloat/specialize/specialize.h
+libvanadissoftfloat_la_CPPFLAGS = -I$(srcdir)/softfloat/include -I$(srcdir)/softfloat/specialize
+libvanadissoftfloat_la_CFLAGS = -w -fPIC
+
 comp_LTLIBRARIES = libvanadis.la libvanadisdbg.la
 
 VANADIS_SRC_FILES = \
@@ -24,6 +218,7 @@ decoder/varm64decoder.h \
 decoder/varm64decoder.cc \
 inst/arm64/varm64inst.h \
 inst/arm64/sem_int.h \
+inst/arm64/sem_fp.h \
 inst/fpregmode.h \
 inst/isatable.h \
 inst/regfile.h \
@@ -629,8 +824,10 @@ libvanadisdbg_la_SOURCES = \
 	$(VANADIS_SRC_FILES)
 
 libvanadis_la_LDFLAGS = -module -avoid-version
+libvanadis_la_LIBADD = libvanadissoftfloat.la
 
 libvanadisdbg_la_LDFLAGS = -module -avoid-version
+libvanadisdbg_la_LIBADD = libvanadissoftfloat.la
 
 libvanadisdbg_la_CPPFLAGS = -DVANADIS_BUILD_DEBUG $(AM_CPPFLAGS)
 

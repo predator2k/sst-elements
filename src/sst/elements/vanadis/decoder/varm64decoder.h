@@ -345,9 +345,10 @@ protected:
                 i->a = sf; i->d = HAS_RD; i->imm = imm; i->imm2 = 0xFFFFull << (hw * 16);
             }
             else {
-                uint64_t v = opc == 0 ? imm : ~imm;
+                // opc 0 is MOVN, 2 is MOVZ
+                uint64_t v = opc == 2 ? imm : ~imm;
                 if ( !sf ) v &= 0xFFFFFFFFull;
-                op(bundle, addr, opc == 0 ? "MOVZ" : "MOVN", INST_INT_ARITH, movImm, {}, { static_cast<uint16_t>(rd) })->imm = v;
+                op(bundle, addr, opc == 2 ? "MOVZ" : "MOVN", INST_INT_ARITH, movImm, {}, { static_cast<uint16_t>(rd) })->imm = v;
             }
             return true;
         }
