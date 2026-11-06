@@ -141,6 +141,12 @@ flushesOutput(const FpCtx& c)
     return sizeof(T) == 2 ? (c.fpcr & FPCR_FZ16) : (c.fpcr & FPCR_FZ);
 }
 
+inline bool
+flushesOutputBf(const FpCtx& c)
+{
+    return c.fpcr & FPCR_FZ;
+}
+
 // One quieted NaN, or the default NaN under DN.
 template <typename T>
 inline T
@@ -589,6 +595,55 @@ convert(From a, FpCtx& c)
     else if constexpr ( sizeof(From) == 8 && sizeof(To) == 4 ) r = f64_to_f32(f(a)).v;
     else r = static_cast<To>(a);
     return sfFinish(r, c);
+}
+
+// BFCVT: single to BFloat16 by FPConvertBF: FZ16-independent, BF16 has the layout of half precision with 8 exponent
+// bits, 7 fraction bits. Output subnormals are flushed by FZ, and the result is rounded by the FPCR, tininess after
+// the rules of FPRoundBase with isbfloat16.
+inline uint16_t
+bfConvert(uint32_t a, FpCtx& c)
+{
+    a = flushIn(a, c);
+    const uint16_t s = static_cast<uint16_t>(a >> 16) & 0x8000;
+    if ( isNaN(a) ) {
+        if ( isSNaN(a) ) c.flags |= IOC;
+        if ( c.dn() ) return 0x7FC0;
+        return static_cast<uint16_t>(s | 0x7FC0 | ((a & Fmt<uint32_t>::FRACM) >> 16));
+    }
+    if ( isInf(a) ) return static_cast<uint16_t>(s | 0x7F80);
+    if ( isZero(a) ) return s;
+    // A BF16 value is a single with the low 16 bits zero, so round the single's significand at bit 16.
+    const uint32_t mag = a & 0x7FFFFFFFu;
+    const uint32_t exp = mag >> 23;
+    uint32_t       frac = mag & Fmt<uint32_t>::FRACM;
+    uint64_t       sig = exp ? (frac | (1u << 23)) : frac;
+    const uint32_t low = sig & 0xFFFFu;
+    sig >>= 16;
+    const bool halfway = low == 0x8000u, above = low > 0x8000u;
+    bool up = false;
+    switch ( c.rmode() ) {
+    case Rounding::TIEEVEN: up = above || (halfway && (sig & 1)); break;
+    case Rounding::POSINF: up = !s && low; break;
+    case Rounding::NEGINF: up = s && low; break;
+    default: up = false; break;
+    }
+    if ( low ) c.flags |= IXC;
+    const uint32_t tiny = exp == 0;
+    if ( flushesOutputBf(c) && tiny ) {
+        c.flags = (c.flags & ~IXC) | UFC;
+        return s;
+    }
+    if ( tiny && low ) c.flags |= UFC;
+    if ( up ) sig += 1;
+    // The carry of sig into the exponent field is the rounding-up of the magnitude.
+    uint32_t result = (exp ? ((exp - 1) << 7) : 0) + static_cast<uint32_t>(sig);
+    if ( result >= 0x7F80u ) {
+        c.flags |= OFC | IXC;
+        const bool to_inf = c.rmode() == Rounding::TIEEVEN || (c.rmode() == Rounding::POSINF && !s) ||
+                            (c.rmode() == Rounding::NEGINF && s);
+        result = to_inf ? 0x7F80u : 0x7F7Fu;
+    }
+    return static_cast<uint16_t>(s | result);
 }
 
 // FCVTXN: double to single, rounding to odd.

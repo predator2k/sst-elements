@@ -199,6 +199,9 @@ decoder/varm64decoder.cc \
 inst/arm64/varm64inst.h \
 inst/arm64/sem_int.h \
 inst/arm64/sem_fp.h \
+inst/arm64/sem_simd.h \
+inst/arm64/sem_fpscalar.h \
+decoder/arm64/dec_fpscalar.h \
 inst/fpregmode.h \
 inst/isatable.h \
 inst/regfile.h \

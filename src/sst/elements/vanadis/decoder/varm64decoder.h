@@ -17,6 +17,7 @@
 #define _H_VANADIS_ARM64_DECODER
 
 #include "decoder/vdecoder.h"
+#include "inst/arm64/sem_fpscalar.h"
 #include "inst/arm64/sem_int.h"
 #include "inst/arm64/varm64inst.h"
 #include "inst/vinstall.h"
@@ -1234,9 +1235,19 @@ protected:
     }
 
     // ---------------------------------------------------------------- later stages
-    bool decodeFpSimd(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle) { return false; }
+    // The floating-point and vector groups; their definitions are in decoder/arm64/.
+    bool decodeFpSimd(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle)
+    {
+        if ( (bits(ins, 31, 28) & 0b0101) == 0b0001 ) return decodeFpScalar(addr, ins, bundle);
+        return false;
+    }
     bool decodeSve(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle) { return false; }
-    bool decodeSimdStructure(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle) { return false; }
+    bool decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSimdStructure(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    // A micro-op that accumulates FPSR bits at retirement.
+    VanadisArm64Inst* fpOp(VanadisInstructionBundle* bundle, uint64_t addr, const char* name, VanadisFunctionalUnitType unit,
+        VanadisArm64Inst::Semantics fn, const std::vector<uint16_t>& in, const std::vector<uint16_t>& out,
+        const std::vector<uint16_t>& fin, const std::vector<uint16_t>& fout);
     // FPCR is a renamed integer-class register; FPSR is the thread's accumulated state, read and written at the
     // front of the reorder buffer so every earlier instruction has added its flags.
     VanadisArm64FpState fp_state_;
@@ -1286,5 +1297,7 @@ protected:
 
 } // namespace Vanadis
 } // namespace SST
+
+#include "decoder/arm64/dec_fpscalar.h"
 
 #endif
