@@ -451,19 +451,22 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
 
                                 // if we are the last request to be processed for this load (if any were split)
                                 // and we promised to do sign extension, then perform it now
+                                // The fragments of a split load may answer in either order, so the last one to
+                                // answer need not hold the top byte: the positions come from the whole load.
                                 if(load_entry->countRequests() == 1) {
+                                    const uint64_t data_end = reg_offset + load_entry->getLoadWidth();
                                     if(load_ins->performSignExtension()) {
-                                        if((register_value.at(reg_offset + addr_offset + load_width - 1) & 0x80) != 0) {
-                                            for(auto i = reg_offset + addr_offset + load_width; i < reg_width; ++i) {
+                                        if((register_value.at(data_end - 1) & 0x80) != 0) {
+                                            for(auto i = data_end; i < reg_width; ++i) {
                                                 register_value.at(i) = 0xFF;
                                             }
                                         } else {
-                                            for(auto i = reg_offset + addr_offset + load_width; i < reg_width; ++i) {
+                                            for(auto i = data_end; i < reg_width; ++i) {
                                                 register_value.at(i) = 0x00;
                                             }
                                         }
                                     } else {
-                                        for(auto i = reg_offset + addr_offset + load_width; i < reg_width; ++i) {
+                                        for(auto i = data_end; i < reg_width; ++i) {
                                             register_value.at(i) = 0x00;
                                         }
                                     }
@@ -496,7 +499,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                         // part of a register (register offset above zero) leaves them alone.
                         if(reg_offset == 0) {
                             const uint8_t fill = load_ins->getISAOptions()->getFPLoadFillByte();
-                            for(auto i = load_width; i < reg_width; ++i) {
+                            for(uint64_t i = load_entry->getLoadWidth(); i < reg_width; ++i) {
                                 register_value.at(i) = fill;
                             }
                         }
