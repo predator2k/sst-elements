@@ -886,14 +886,21 @@ protected:
         const uint32_t size = bits(ins, 31, 30);
         const bool     vec = op1;
 
-        // Advanced SIMD structures and SVE memory are handled by their own groups.
-        if ( (op0 & 0b1011) == 0 && vec && (op2 == 0 || op2 == 1) && bit(ins, 24) == 0 ) {
-            return decodeSimdStructure(addr, ins, bundle);
+        // The top-level classes of the loads and stores (op0 = bits 31..28, op1 = bit 26, op2 = bits 24..23,
+        // op3 = bits 21..16, op4 = bits 11..10); lo is op0's bits 29..28.
+        const uint32_t lo = bits(ins, 29, 28);
+        if ( (op0 & 0b1011) == 0 && vec ) return decodeSimdStructure(addr, ins, bundle);
+        if ( lo == 0b00 ) {
+            if ( vec ) return false;
+            if ( (op2 & 2) == 0 ) return decodeExclusiveOrdered(addr, ins, bundle);
+            return false;   // RCpc3 (LDIAPP, STILP, post-indexed LDAPR) is not implemented
         }
-        if ( (op0 & 0b0011) == 0 && !vec && bit(ins, 29) == 0 && bits(ins, 29, 27) == 0b001 ) {
-            return decodeExclusiveOrdered(addr, ins, bundle);
+        if ( lo == 0b01 && (op2 & 2) ) {
+            if ( op4 == 0b01 ) return false;   // memory copy and set (MOPS) are not reported in HWCAP2
+            if ( !vec && !(op3 & 0x20) && op4 == 0b00 ) return decodeRcpcUnscaled(addr, ins, bundle);
+            return false;
         }
-        if ( bits(ins, 29, 27) == 0b011 ) {
+        if ( lo == 0b01 ) {
             // load register, literal
             const int64_t off = sext(bits(ins, 23, 5), 19) * 4;
             const uint32_t opc = bits(ins, 31, 30);
@@ -914,8 +921,8 @@ protected:
             else loadInt(bundle, addr, A64Reg::T0, 0, t, opc == 1 ? 8 : 4, false);
             return true;
         }
-        if ( bits(ins, 29, 27) == 0b101 ) return decodeLoadStorePair(addr, ins, bundle);
-        if ( bits(ins, 29, 27) == 0b111 ) {
+        if ( lo == 0b10 ) return decodeLoadStorePair(addr, ins, bundle);
+        if ( lo == 0b11 ) {
             const bool is_unsigned_imm = bit(ins, 24);
             const uint32_t opc = bits(ins, 23, 22);
             if ( is_unsigned_imm ) {
@@ -954,6 +961,30 @@ protected:
         }
         (void)op3;
         return false;
+    }
+
+    // LDAPUR, LDAPURS*, STLUR (FEAT_LRCPC2): unscaled immediate, release-consistent processor-consistent order.
+    bool decodeRcpcUnscaled(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle)
+    {
+        using namespace A64Sem;
+        const uint32_t size = bits(ins, 31, 30), opc = bits(ins, 23, 22), rn = bits(ins, 9, 5), rt = bits(ins, 4, 0);
+        const int64_t  off = sext(bits(ins, 20, 12), 9);
+        const uint32_t bytes = 1u << size;
+        if ( opc == 0 ) {
+            add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+            storeInt(bundle, addr, rs(rn), off, rz(rt), bytes);
+            return true;
+        }
+        if ( (opc == 2 && size == 3) || (opc == 3 && size >= 2) ) return false;
+        const uint16_t target = rt == 31 ? A64Reg::T1 : static_cast<uint16_t>(rt);
+        loadInt(bundle, addr, rs(rn), off, target, bytes, opc >= 2);
+        if ( opc == 3 && rt != 31 ) {
+            auto* i = op(bundle, addr, "ZEXT32", INST_INT_ARITH, movReg, { target }, { target });
+            i->a = 0;
+            i->d = HAS_RD;
+        }
+        add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        return true;
     }
 
     bool decodeLoadStorePair(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle)
