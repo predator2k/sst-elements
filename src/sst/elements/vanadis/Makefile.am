@@ -203,6 +203,14 @@ inst/arm64/sem_simd.h \
 inst/arm64/sem_fpscalar.h \
 decoder/arm64/dec_fpscalar.h \
 decoder/arm64/dec_simd.h \
+decoder/arm64/dec_sve.h \
+decoder/arm64/dec_sve2.h \
+decoder/arm64/dec_sve_fp.h \
+decoder/arm64/dec_sve_mem.h \
+inst/arm64/sem_sve.h \
+inst/arm64/sem_sve2.h \
+inst/arm64/sem_sve_fp.h \
+inst/arm64/varm64mem.h \
 inst/arm64/sem_crypto.h \
 inst/arm64/sem_simd_fp.h \
 inst/arm64/sem_simd_int.h \

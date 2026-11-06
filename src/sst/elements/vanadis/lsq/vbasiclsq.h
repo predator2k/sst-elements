@@ -391,7 +391,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                                         "(load-addr: 0x%0" PRI_ADDR ", load-thr: %" PRIu32 ").\n",
                                         ev->vAddr, load_entry->getHWThread());
                         #endif
-                        load_ins->flagError();
+                        if ( load_ins->suppressesFault() ) load_ins->noteSuppressedFault(ev->vAddr);
+                        else load_ins->flagError();
                     }
                     if(ev->vAddr < 64)
                     {
@@ -401,7 +402,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                                         "(load-addr: 0x%0" PRI_ADDR ",physical-addr: 0x%0" PRI_ADDR ", load-thr: %" PRIu32 ").\n",
                                         ev->vAddr, ev->pAddr, load_entry->getHWThread());
                         #endif
-                        load_ins->flagError();
+                        if ( load_ins->suppressesFault() ) load_ins->noteSuppressedFault(ev->vAddr);
+                        else load_ins->flagError();
                     }
 
                     uint16_t target_reg = 0;
@@ -525,6 +527,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                         }
                         #endif
 
+                        load_ins->finishLoad(lsq_->register_files_->at(load_entry->getHWThread()));
                         load_ins->markExecuted();
                         lsq_->stat_loads_executed_->addData(1);
                         lsq_->loads_pending_.erase(load_itr);
@@ -1323,6 +1326,13 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 load_address, sw_thr);
             #endif
 
+            // A vector load whose elements are all inactive makes no access.
+            if ( load_width == 0 ) {
+                load_ins->finishLoad(hw_thr_reg);
+                load_ins->markExecuted();
+                return true;
+            }
+
             if(UNLIKELY(load_ins->trapsError()))
             {
                 {
@@ -1413,6 +1423,12 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             output_->verbose(CALL_INFO, 16, VANADIS_DBG_LSQ_LOAD_FLG, "--> computeStoreAddress for sw_thr: %" PRIu32 "\n",sw_thr);
             #endif
             store_ins->computeStoreAddress(output_, hw_thr_reg, &store_address, &store_width);
+            // A vector store whose elements are all inactive makes no access.
+            if ( store_width == 0 && !store_ins->trapsError() ) {
+                store_ins->markExecuted();
+                *trap_error = 1;
+                return nullptr;
+            }
             if(store_ins->trapsError())
             {
                 #ifdef VANADIS_BUILD_DEBUG

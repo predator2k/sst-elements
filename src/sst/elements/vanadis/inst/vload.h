@@ -67,6 +67,12 @@ public:
 
     bool performSignExtension() const { return signed_extend; }
 
+    // A speculative vector load (first-fault, non-fault) takes a failed access as data rather than as an error.
+    virtual bool suppressesFault() const { return false; }
+    virtual void noteSuppressedFault(uint64_t vaddr) {}
+    // Called once when the last request of the load has answered, or when computeLoadAddress asked for no access.
+    virtual void finishLoad(VanadisRegisterFile* regFile) {}
+
     virtual bool                      isPartialLoad() const { return false; }
     virtual VanadisFunctionalUnitType getInstFuncType() const { return INST_LOAD; }
     virtual const char*               getInstCode() const

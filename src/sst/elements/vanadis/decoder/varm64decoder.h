@@ -21,6 +21,10 @@
 #include "inst/arm64/sem_fpscalar.h"
 #include "inst/arm64/sem_simd_fp.h"
 #include "inst/arm64/sem_simd_int.h"
+#include "inst/arm64/sem_sve.h"
+#include "inst/arm64/sem_sve2.h"
+#include "inst/arm64/sem_sve_fp.h"
+#include "inst/arm64/varm64mem.h"
 #include "inst/arm64/sem_int.h"
 #include "inst/arm64/varm64inst.h"
 #include "inst/vinstall.h"
@@ -32,6 +36,8 @@
 
 namespace SST {
 namespace Vanadis {
+
+struct A64SveDtype;
 
 // A64 decoder of the Vanadis core: EL0 only, little-endian. decode() walks the top-level encoding
 // groups of the A64 instruction set; each group is a member function. One instruction becomes one
@@ -1265,7 +1271,25 @@ protected:
     bool decodeCryptoSha3Reg(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
     bool decodeCryptoSha2Reg(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
     bool decodeCryptoHigh(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
-    bool decodeSve(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle) { return false; }
+    bool decodeSve(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSveInt(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSvePermute(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSveCompareAndPred(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSveFpMiscInt(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSveMem(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSve2Logic(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    bool decodeSve2MulUnpred(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
+    uint32_t sveChunkBytes() const;
+    void sveContigLoad(uint64_t addr, VanadisInstructionBundle* bundle, uint16_t pg, uint16_t zt, uint32_t nreg, struct A64SveDtype dt,
+        uint16_t base, uint16_t index_reg, uint32_t shift, int64_t imm, uint32_t ff);
+    void sveContigStore(uint64_t addr, VanadisInstructionBundle* bundle, uint16_t pg, uint16_t zt, uint32_t nreg, uint32_t log2_ebytes,
+        uint32_t mbytes, uint16_t base, uint16_t index_reg, uint32_t shift, int64_t imm);
+    void sveGather(uint64_t addr, VanadisInstructionBundle* bundle, uint16_t pg, uint16_t zt, uint16_t zm, uint16_t base, uint32_t mode,
+        uint32_t shift, int64_t imm, struct A64SveDtype dt, bool ff);
+    void sveScatter(uint64_t addr, VanadisInstructionBundle* bundle, uint16_t pg, uint16_t zt, uint16_t zm, uint16_t base, uint32_t mode,
+        uint32_t shift, int64_t imm, uint32_t log2_ebytes, uint32_t mbytes);
     bool decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
     bool decodeSimdStructure(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);
     // A micro-op that accumulates FPSR bits at retirement.
@@ -1324,5 +1348,9 @@ protected:
 
 #include "decoder/arm64/dec_fpscalar.h"
 #include "decoder/arm64/dec_simd.h"
+#include "decoder/arm64/dec_sve.h"
+#include "decoder/arm64/dec_sve2.h"
+#include "decoder/arm64/dec_sve_fp.h"
+#include "decoder/arm64/dec_sve_mem.h"
 
 #endif

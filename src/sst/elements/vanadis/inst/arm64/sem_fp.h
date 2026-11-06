@@ -207,9 +207,10 @@ sfFinish(T r, FpCtx& c)
 {
     const uint_fast8_t e = softfloat_exceptionFlags;
     if ( flushesOutput<T>(c) && (isSub(r) || (e & softfloat_flag_underflow)) ) {
+        // A flushed result does not report inexact; what earlier elements of a vector reported stays.
         c.flags |= UFC;
+        softfloat_exceptionFlags = e & ~softfloat_flag_inexact;
         sfCollect(c);
-        c.flags &= ~IXC;
         return zero<T>(sign(r));
     }
     sfCollect(c);
