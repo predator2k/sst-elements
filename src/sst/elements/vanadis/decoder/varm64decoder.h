@@ -54,7 +54,9 @@ public:
         { "vector_bytes", "SVE vector length in bytes: a multiple of 16 from 16 to 256; 16 with no SVE", "16" },
         { "dczid_block_bytes", "Block size DC ZVA zeroes and DCZID_EL0 reports, bytes (a power of two)", "64" },
         { "counter_hz", "Frequency CNTFRQ_EL0 reports and CNTVCT_EL0 counts at, Hz", "1000000000" },
-        { "core_hz", "Core clock, Hz; CNTVCT_EL0 is the cycle count scaled by counter_hz / core_hz", "1000000000" })
+        { "core_hz", "Core clock, Hz; CNTVCT_EL0 is the cycle count scaled by counter_hz / core_hz", "1000000000" },
+        { "unimplemented_as_nop", "Test aid: decode an instruction the decoder does not implement as a no-op and print "
+                                  "its word, instead of a decode fault", "0" })
 
     VanadisARM64Decoder(ComponentId_t id, Params& params, SST::Output* output) : VanadisDecoder(id, params, output)
     {
@@ -71,6 +73,7 @@ public:
             static_cast<uint16_t>(vector_bytes), /* FP load fills upper bytes with */ 0);
         setInstructionPointer(params.find<uint64_t>("entry_point", 0));
         fatal_decode_fault = params.find<bool>("halt_on_decode_fault", false);
+        unimplemented_as_nop = params.find<bool>("unimplemented_as_nop", false);
     }
 
     ~VanadisARM64Decoder() {}
@@ -175,6 +178,7 @@ public:
 protected:
     const VanadisDecoderOptions* options;
     bool                         fatal_decode_fault;
+    bool                         unimplemented_as_nop = false;
     uint32_t                     vector_bytes;
     uint32_t                     dczid_block_bytes;
     uint64_t                     counter_hz;
@@ -281,6 +285,11 @@ protected:
             ok = decodeSve(addr, ins, bundle);
         }
         flushPending(bundle);
+        if ( !ok && unimplemented_as_nop ) {
+            output_->output("UNIMPLEMENTED 0x%08" PRIx32 " at 0x%" PRI_ADDR "\n", ins, addr);
+            add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
+            return;
+        }
         if ( !ok ) {
             if ( fatal_decode_fault ) {
                 output_->fatal(CALL_INFO, -1, "[decode] unknown instruction 0x%08" PRIx32 " at 0x%" PRI_ADDR "\n", ins, addr);
