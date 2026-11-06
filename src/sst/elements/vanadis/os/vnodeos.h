@@ -290,9 +290,9 @@ private:
         VanadisSyscall* getSyscall( uint32_t hw_thread ) { return hw_thread_map_.at(hw_thread).getSyscall(); }
 
         void checkpoint( FILE* fp ) {
-            fprintf(fp, "m_hwThreadMap.size(): %zu\n",hw_thread_map_.size());
+            fprintf(fp, "hw_thread_map_.size(): %zu\n",hw_thread_map_.size());
             for ( auto i = 0; i < hw_thread_map_.size(); i++ ) {
-                fprintf(fp, "hwThread: %" PRIu32 "\n",i);
+                fprintf(fp, "hw_thread: %" PRIu32 "\n",i);
                 hw_thread_map_[i].checkpoint( fp );
             }
         }
