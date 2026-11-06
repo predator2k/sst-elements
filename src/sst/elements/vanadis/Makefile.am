@@ -9,20 +9,6 @@ AM_CPPFLAGS += \
 compdir = $(pkglibdir)
 noinst_LTLIBRARIES = libvanadissoftfloat.la
 libvanadissoftfloat_la_SOURCES = \
-softfloat/source/bf16_add.c \
-softfloat/source/bf16_div.c \
-softfloat/source/bf16_eq.c \
-softfloat/source/bf16_isSignalingNaN.c \
-softfloat/source/bf16_le.c \
-softfloat/source/bf16_lt.c \
-softfloat/source/bf16_mul.c \
-softfloat/source/bf16_mulAdd.c \
-softfloat/source/bf16_sqrt.c \
-softfloat/source/bf16_sub.c \
-softfloat/source/bf16_to_f32.c \
-softfloat/source/bf16_to_f64.c \
-softfloat/source/bf16_to_i32.c \
-softfloat/source/bf16_to_ui32.c \
 softfloat/source/f16_add.c \
 softfloat/source/f16_div.c \
 softfloat/source/f16_eq.c \
@@ -63,7 +49,6 @@ softfloat/source/f32_rem.c \
 softfloat/source/f32_roundToInt.c \
 softfloat/source/f32_sqrt.c \
 softfloat/source/f32_sub.c \
-softfloat/source/f32_to_bf16.c \
 softfloat/source/f32_to_f16.c \
 softfloat/source/f32_to_f64.c \
 softfloat/source/f32_to_i32.c \
@@ -89,7 +74,6 @@ softfloat/source/f64_rem.c \
 softfloat/source/f64_roundToInt.c \
 softfloat/source/f64_sqrt.c \
 softfloat/source/f64_sub.c \
-softfloat/source/f64_to_bf16.c \
 softfloat/source/f64_to_f16.c \
 softfloat/source/f64_to_f32.c \
 softfloat/source/f64_to_i32.c \
@@ -100,7 +84,6 @@ softfloat/source/f64_to_ui32.c \
 softfloat/source/f64_to_ui32_r_minMag.c \
 softfloat/source/f64_to_ui64.c \
 softfloat/source/f64_to_ui64_r_minMag.c \
-softfloat/source/i32_to_bf16.c \
 softfloat/source/i32_to_f16.c \
 softfloat/source/i32_to_f32.c \
 softfloat/source/i32_to_f64.c \
@@ -136,7 +119,6 @@ softfloat/source/s_normRoundPackToF128.c \
 softfloat/source/s_normRoundPackToF16.c \
 softfloat/source/s_normRoundPackToF32.c \
 softfloat/source/s_normRoundPackToF64.c \
-softfloat/source/s_normSubnormalBF16Sig.c \
 softfloat/source/s_normSubnormalExtF80Sig.c \
 softfloat/source/s_normSubnormalF128Sig.c \
 softfloat/source/s_normSubnormalF16Sig.c \
@@ -145,7 +127,6 @@ softfloat/source/s_normSubnormalF64Sig.c \
 softfloat/source/s_remStepMBy32.c \
 softfloat/source/s_roundMToI64.c \
 softfloat/source/s_roundMToUI64.c \
-softfloat/source/s_roundPackToBF16.c \
 softfloat/source/s_roundPackToExtF80.c \
 softfloat/source/s_roundPackToF128.c \
 softfloat/source/s_roundPackToF16.c \
@@ -173,7 +154,6 @@ softfloat/source/s_subMagsF16.c \
 softfloat/source/s_subMagsF32.c \
 softfloat/source/s_subMagsF64.c \
 softfloat/source/softfloat_state.c \
-softfloat/source/ui32_to_bf16.c \
 softfloat/source/ui32_to_f16.c \
 softfloat/source/ui32_to_f32.c \
 softfloat/source/ui32_to_f64.c \
