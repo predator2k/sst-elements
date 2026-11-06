@@ -125,11 +125,11 @@ public:
     // Vector-register bytes by position.
     const uint8_t* Vin(VanadisRegisterFile* rf, uint16_t pos) const
     {
-        return reinterpret_cast<const uint8_t*>(rf->getFPReg(phys_fp_regs_in[pos]));
+        return rf->fpRegBytes(phys_fp_regs_in[pos]);
     }
     uint8_t* Vout(VanadisRegisterFile* rf, uint16_t pos)
     {
-        return reinterpret_cast<uint8_t*>(rf->getFPReg(phys_fp_regs_out[pos]));
+        return rf->fpRegBytes(phys_fp_regs_out[pos]);
     }
 
     // Payload of the semantic function; its meaning belongs to that function.

@@ -77,6 +77,12 @@ public:
         return fp_reg_width;
     }
 
+    // The bytes of one floating-point class register (the vector semantic functions of A64).
+    uint8_t* fpRegBytes(const uint16_t reg) {
+        assert(reg < count_fp_regs);
+        return reinterpret_cast<uint8_t*>(&fp_reg_storage[get_reg_index(reg, 1)]);
+    }
+
     void copyFromRegister(uint16_t reg, uint32_t offset, uint8_t* values, uint32_t len, bool is_fp) {
         if(is_fp) {
             copyFromFPRegister(reg, offset, values, len);
