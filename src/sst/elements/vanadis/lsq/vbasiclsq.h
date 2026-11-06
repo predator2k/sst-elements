@@ -1001,8 +1001,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                         }
                         #endif
 
-                        assert(load_width <= 8);
-                        assert(load_width >= 0);
+                        // An integer load is at most one register; a vector load (A64 Q and SVE Z registers) may be wider.
+                        assert(load_width <= 8 || load_ins->getValueRegisterType() == LOAD_FP_REGISTER);
 
                         #ifdef VANADIS_BUILD_DEBUG
                         if(UNLIKELY(0 == (load_address & address_mask_))) {
