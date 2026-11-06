@@ -468,10 +468,11 @@ VanadisARM64Decoder::decodeSvePermute(uint64_t addr, uint32_t ins, VanadisInstru
         return true;
     }
     if ( (ins & 0xFFE0E000) == 0x05A00000 ) {
+        // ZIP1, ZIP2, UZP1, UZP2 and, at 110 and 111, TRN1, TRN2 of quadwords
         const uint32_t kind = bits(ins, 12, 10);
-        if ( kind > 5 ) return false;
+        if ( kind == 4 || kind == 5 ) return false;
         auto* i = op(bundle, addr, "PERM.Q", INST_FP_ARITH, permuteZ, {}, {}, { rn, rm }, { rd });
-        i->c = kind;
+        i->c = kind >= 6 ? kind - 2 : kind;
         i->d = 1;
         return true;
     }

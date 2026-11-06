@@ -786,10 +786,15 @@ fmmlaZ(VanadisArm64Inst& op, VanadisRegisterFile* rf)
             const uint8_t* n = op.Vin(rf, 1) + q;
             const uint8_t* m = op.Vin(rf, 2) + q;
             T out[4];
-            out[0] = add(add(vget<T>(d, 0), mul(vget<T>(n, 0), vget<T>(m, 0), c), c), mul(vget<T>(n, 1), vget<T>(m, 2), c), c);
-            out[1] = add(add(vget<T>(d, 1), mul(vget<T>(n, 0), vget<T>(m, 1), c), c), mul(vget<T>(n, 1), vget<T>(m, 3), c), c);
-            out[2] = add(add(vget<T>(d, 2), mul(vget<T>(n, 2), vget<T>(m, 0), c), c), mul(vget<T>(n, 3), vget<T>(m, 2), c), c);
-            out[3] = add(add(vget<T>(d, 3), mul(vget<T>(n, 2), vget<T>(m, 1), c), c), mul(vget<T>(n, 3), vget<T>(m, 3), c), c);
+            for ( unsigned a = 0; a < 2; ++a ) {
+                for ( unsigned b = 0; b < 2; ++b ) {
+                    T sum = vget<T>(d, 2 * a + b);
+                    const T p0 = mul(vget<T>(n, 2 * a), vget<T>(m, 2 * b), c);
+                    const T p1 = mul(vget<T>(n, 2 * a + 1), vget<T>(m, 2 * b + 1), c);
+                    sum = add(sum, p0, c);
+                    out[2 * a + b] = add(sum, p1, c);
+                }
+            }
             std::memcpy(r + q, out, seg_bytes);
         }
     });
