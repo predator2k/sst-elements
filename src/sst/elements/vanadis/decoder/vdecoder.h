@@ -189,6 +189,10 @@ public:
 
     virtual VanadisFPRegisterMode getFPRegisterMode() const = 0;
 
+    // Decoder state outside the registers that the core's checkpoint file carries; the AArch64 decoder has FPSR.
+    virtual void checkpointState(FILE* fp) {}
+    virtual void checkpointStateLoad(FILE* fp) {}
+
     virtual const char*                  getISAName() const                        = 0;
     virtual uint16_t                     countISAIntReg() const                    = 0;
     virtual uint16_t                     countISAFPReg() const                     = 0;

@@ -30,7 +30,9 @@
 #include "inst/vinstall.h"
 #include "os/varm64cpuos.h"
 
+#include <cinttypes>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -182,6 +184,14 @@ public:
             }
         }
         return success;
+    }
+
+    void checkpointState(FILE* fp) override { fprintf(fp, "FPSR %" PRIx32 "\n", fp_state_.fpsr); }
+    void checkpointStateLoad(FILE* fp) override
+    {
+        uint32_t value = 0;
+        if ( 1 != fscanf(fp, "FPSR %" SCNx32 "\n", &value) ) output_->fatal(CALL_INFO, -1, "The checkpoint file has no FPSR.\n");
+        fp_state_.fpsr = value;
     }
 
     // Cycle count of the decoder and the counter frequency, read by MRS CNTVCT_EL0 and CNTFRQ_EL0.

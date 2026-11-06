@@ -2490,7 +2490,13 @@ VanadisCore::checkpoint(FILE* fp )
                 fprintf(fp,"INT %d %#" PRIx64 "\n",i,val);
             }
             for ( int i = 0; i < isa_table->getNumFpRegs(); i++ ) {
-                if ( thr_decoder->getFPRegisterMode() == VANADIS_REGISTER_MODE_FP32 ) {
+                if ( reg_file->getFPRegWidth() > 8 ) {
+                    // A register wider than 64 bits (the AArch64 vector class) is written byte by byte.
+                    const uint8_t* bytes = reg_file->fpRegBytes( isa_table->getFPPhysReg( i ) );
+                    fprintf(fp,"FP %d ",i);
+                    for ( uint32_t b = 0; b < reg_file->getFPRegWidth(); b++ ) fprintf(fp,"%02x",bytes[b]);
+                    fprintf(fp,"\n");
+                } else if ( thr_decoder->getFPRegisterMode() == VANADIS_REGISTER_MODE_FP32 ) {
                     uint32_t val = reg_file->getFPReg<uint32_t>( isa_table->getFPPhysReg( i ) );
                     fprintf(fp,"FP %d %#" PRIx32 "\n",i,val);
                 } else {
@@ -2498,6 +2504,7 @@ VanadisCore::checkpoint(FILE* fp )
                     fprintf(fp,"FP %d %#" PRIx64 "\n",i,val);
                 }
             }
+            thr_decoder->checkpointState(fp);
         } else {
             fprintf(fp,"active: no\n");
         }
@@ -2535,14 +2542,25 @@ VanadisCore::checkpointLoad(FILE* fp)
             output->verbose(CALL_INFO, 0, VANADIS_DBG_CHECKPOINT,"tlsPtr: %" PRIx64 "\n", value);
             thr_decoder->setThreadLocalStoragePointer( value );
 
-            for ( auto i = 0; i < 35; i++ ) {
+            for ( auto i = 0; i < isa_table->getNumIntRegs(); i++ ) {
                 int reg;
                 assert( 3 == fscanf(fp,"%s %d %" PRIx64 "\n",str1,&reg,&value) );
                 output->verbose(CALL_INFO, 0, VANADIS_DBG_CHECKPOINT,"INT %d %" PRIx64 "\n",reg,value);
                 reg_file->setIntReg<uint64_t>(isa_table->getIntPhysReg(i), value);
             }
-            for ( int i = 0; i < 32; i++ ) {
+            for ( int i = 0; i < isa_table->getNumFpRegs(); i++ ) {
                 int reg;
+                if ( reg_file->getFPRegWidth() > 8 ) {
+                    assert( 2 == fscanf(fp,"%s %d ",str1,&reg) );
+                    uint8_t* bytes = reg_file->fpRegBytes( isa_table->getFPPhysReg( i ) );
+                    for ( uint32_t b = 0; b < reg_file->getFPRegWidth(); b++ ) {
+                        unsigned int byte_value;
+                        assert( 1 == fscanf(fp,"%2x",&byte_value) );
+                        bytes[b] = static_cast<uint8_t>(byte_value);
+                    }
+                    assert( 0 == fscanf(fp,"\n") );
+                    continue;
+                }
                 assert( 3 == fscanf(fp,"%s %d %" PRIx64 "\n",str1,&reg,&value) );
                 output->verbose(CALL_INFO, 0, VANADIS_DBG_CHECKPOINT,"FP %d %" PRIx64 "\n",reg,value);
                 if ( VANADIS_REGISTER_MODE_FP32 == thr_decoder->getFPRegisterMode() ) {
@@ -2551,6 +2569,7 @@ VanadisCore::checkpointLoad(FILE* fp)
                     reg_file->setFPReg<uint64_t>(isa_table->getFPPhysReg(i), value);
                 }
             }
+            thr_decoder->checkpointStateLoad(fp);
 
             halted_masks[hw_thr]            = false;
             handleMisspeculate( hw_thr, startAddr );
