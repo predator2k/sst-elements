@@ -15,6 +15,7 @@ StreamPrefetcher::StreamPrefetcher(ComponentId_t id, Params& params) : CacheList
     lines_per_page_ = params.find<uint64_t>("page_size", 4096) / line_bytes_;
     degree_ = params.find<int64_t>("degree", 4);
     streams_.resize(params.find<uint32_t>("stream_entries", 32));
+    train_on_writes_ = params.find<bool>("train_on_writes", true);
 
     stat_prefetches_ = registerStatistic<uint64_t>("prefetches_issued");
 }
@@ -73,6 +74,7 @@ StreamPrefetcher::notifyAccess(const CacheListenerNotification& notify)
 {
     const NotifyAccessType type = notify.getAccessType();
     if ( type != READ && type != WRITE ) return;
+    if ( type == WRITE && ! train_on_writes_ ) return;
 
     const int64_t line = static_cast<int64_t>(notify.getPhysicalAddress() / line_bytes_);
     const uint64_t page = static_cast<uint64_t>(line) / lines_per_page_;

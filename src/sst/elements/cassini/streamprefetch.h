@@ -39,7 +39,8 @@ public:
         { "cache_line_size", "Size of the cache line the prefetcher is attached to", "64" },
         { "page_size", "Prefetches stay inside this page size", "4096" },
         { "stream_entries", "Pages tracked at once", "32" },
-        { "degree", "Lines ahead of the access to fetch", "4" }
+        { "degree", "Lines ahead of the access to fetch", "4" },
+        { "train_on_writes", "Writes train the streams and issue prefetches as reads do; false lets only reads do it", "true" }
     )
 
     SST_ELI_DOCUMENT_STATISTICS(
