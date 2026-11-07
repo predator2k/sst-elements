@@ -135,6 +135,7 @@ public:
         { "reorder_instructions", "Instructions the reorder buffer holds, counted once whatever their micro-ops; 0 counts only the micro-op slots (reorder_slots)", "0"},
         { "recover_at_execute", "With rename_at_dispatch, a mispredicted branch squashes the younger instructions when it executes, and the older ones go on; false squashes at retire", "false"},
         { "retire_instructions_per_cycle", "Instructions (micro-op groups) retired per cycle; the micro-ops of a group do not count against retires_per_cycle. 0 counts micro-ops against retires_per_cycle as upstream", "0"},
+        { "stores_out_of_order", "With stores_pass_loads, a plain store also issues ahead of older plain stores that have not issued (its address registers are ready first); the load-store queue keeps its stores in program order. False keeps stores in program order at issue", "false"},
         { "stores_pass_loads", "With rename_at_dispatch, a plain store issues to the load-store queue ahead of older plain loads that have not issued, when the store buffer has room for it; false waits for every older memory operation", "false"},
         { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },
@@ -374,6 +375,7 @@ private:
     bool last_issued_companion_ = false;
     // stores_pass_loads: plain stores issue ahead of older plain loads.
     bool stores_pass_loads = false;
+    bool stores_out_of_order = false;
     uint32_t rob_instruction_limit = 0;
     // The issue queues of the integer and the floating-point units: their sizes and the renamed micro-ops waiting in them.
     enum IssueQueue : uint8_t { QUEUE_NONE = 0, QUEUE_INTEGER = 1, QUEUE_FP = 2 };

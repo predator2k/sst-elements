@@ -116,6 +116,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     recover_at_execute = params.find<bool>("recover_at_execute", false);
     retire_instructions_per_cycle = params.find<uint32_t>("retire_instructions_per_cycle", 0);
     stores_pass_loads = params.find<bool>("stores_pass_loads", false);
+    stores_out_of_order = params.find<bool>("stores_out_of_order", false);
     rob_instruction_limit = params.find<uint32_t>("reorder_instructions", 0);
     queue_entries[QUEUE_INTEGER] = params.find<uint32_t>("integer_queue_entries", 0);
     queue_entries[QUEUE_FP] = params.find<uint32_t>("fp_queue_entries", 0);
@@ -763,8 +764,9 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
             // A store need not wait for older plain loads: it never gives them its bytes, and the load-store queue orders
             // them by their memory sequence. It waits for older stores and ordered operations, and for a store-buffer
             // entry, so it never stands in the queue ahead of an older load it would block.
-            order_allows = ! ( unallocated_memory_op_seen & ( UNISSUED_STORE | UNISSUED_ORDERED ) )
-                && ( ! ( unallocated_memory_op_seen & UNISSUED_LOAD ) || lsq->storeBufferHasRoom(hwThr) );
+            const int waits_for = stores_out_of_order ? UNISSUED_ORDERED : ( UNISSUED_STORE | UNISSUED_ORDERED );
+            order_allows = ! ( unallocated_memory_op_seen & waits_for )
+                && ( ! ( unallocated_memory_op_seen & ( UNISSUED_LOAD | UNISSUED_STORE ) ) || lsq->storeBufferHasRoom(hwThr) );
         }
         else if ( memory_op ) {
             order_allows = 0 == unallocated_memory_op_seen;

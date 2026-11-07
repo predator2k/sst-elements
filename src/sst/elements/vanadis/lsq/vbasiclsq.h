@@ -1396,7 +1396,12 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 if(store_address_listener_) {
                     store_address_listener_(store_ins, new_pending_store->getStoreAddress(), new_pending_store->getStoreWidth());
                 }
-                stores_pending_[store_ins->getHWThread()].push_back(new_pending_store);
+                // The pending stores stay in program order: a store that issued ahead of an older one goes before it.
+                auto& pending = stores_pending_[store_ins->getHWThread()];
+                auto at = pending.end();
+                const uint64_t sequence = store_ins->getMemorySequence();
+                while (sequence != 0 && at != pending.begin() && (*std::prev(at))->getStoreInstruction()->getMemorySequence() > sequence) --at;
+                pending.insert(at, new_pending_store);
                 stores_pending_size_++;
             }
             return true;
