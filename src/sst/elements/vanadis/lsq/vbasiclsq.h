@@ -337,11 +337,17 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 parked_itr = sendLoadReq(*parked_itr) ? parked_loads_.erase(parked_itr) : std::next(parked_itr);
             }
 
-            // this can be called multiple times per cycle
-            for(uint32_t attempt = 0; attempt < max_issue_attempts_per_cycle_; ++attempt) {
+            // this can be called multiple times per cycle; the second register of a load pair takes no issue slot
+            for(uint32_t attempt = 0, slots = 0; slots < max_issue_attempts_per_cycle_ && attempt < 2 * max_issue_attempts_per_cycle_; ++attempt) {
                 if (op_q_size_ == 0)
                     break;
+                bool shares = false;
+                if ( ! op_q_[op_q_index_].empty() ) {
+                    const VanadisLoadInstruction* load = dynamic_cast<const VanadisLoadInstruction*>(op_q_[op_q_index_].front()->getInstruction());
+                    shares = load != nullptr && load->sharesLoadPort();
+                }
                 const bool attempt_result = attempt_to_issue(cycle, attempt, op_q_index_);
+                if ( ! shares ) slots++;
                 op_q_index_++;
                 if ( op_q_index_ == hw_threads_ ) op_q_index_ = 0;
             }

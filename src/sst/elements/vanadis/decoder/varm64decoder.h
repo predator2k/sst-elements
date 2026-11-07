@@ -129,6 +129,8 @@ public:
                             "is fixed or integer_divide, vector is 1 for a class whose result goes to a vector pipe's forwarding "
                             "network. Empty keeps the latency of each micro-op's functional unit", "[]" },
         { "taken_branches_per_cycle", "Predicted-taken branches the front end follows per cycle; 0 is no limit", "0" },
+        { "fetch_window_bytes", "Bytes of an aligned fetch window: a fetch block ends at the end of its window or at a predicted-taken branch", "32" },
+        { "fetch_blocks_per_cycle", "Fetch blocks the front end delivers per cycle; 0 is no limit", "0" },
         { "unimplemented_as_nop", "Test aid: decode an instruction the decoder does not implement as a no-op and print "
                                   "its word, instead of a decode fault", "0" })
 
@@ -148,6 +150,11 @@ public:
         gp_fp_transfer_extra_cycles = params.find<uint16_t>("gp_fp_transfer_extra_cycles", 0);
         core_hz           = params.find<uint64_t>("core_hz", 1000000000ull);
         taken_branches_per_cycle = params.find<uint32_t>("taken_branches_per_cycle", 0);
+        fetch_window_bytes = params.find<uint32_t>("fetch_window_bytes", 32);
+        fetch_blocks_per_cycle = params.find<uint32_t>("fetch_blocks_per_cycle", 0);
+        if ( fetch_window_bytes == 0 || (fetch_window_bytes & (fetch_window_bytes - 1)) != 0 ) {
+            output_->fatal(CALL_INFO, -1, "fetch_window_bytes must be a power of two, got %" PRIu32 "\n", fetch_window_bytes);
+        }
         readTimingTable(params);
         options           = new VanadisDecoderOptions(
             A64Reg::NO_ZERO_REG, A64Reg::INT_COUNT, A64Reg::FP_COUNT, /* syscall code */ 8, VANADIS_REGISTER_MODE_FP64,
@@ -193,6 +200,8 @@ public:
         if ( cycle != taken_cycle_ ) {
             taken_cycle_ = cycle;
             taken_this_cycle_ = 0;
+            blocks_this_cycle_ = 0;
+            block_window_ = UINT64_MAX;
         }
         // The front end follows taken_branches_per_cycle predicted-taken branches per cycle.
         if ( taken_branches_per_cycle > 0 && taken_this_cycle_ >= taken_branches_per_cycle ) return false;
@@ -205,7 +214,16 @@ public:
                     output_->fatal(CALL_INFO, -1, "The instruction at 0x%" PRI_ADDR " has %" PRIu32 " micro-ops; reorder_slots (%" PRIu64 ") must be larger.\n",
                         ip, static_cast<uint32_t>(bundle->getInstructionCount()), static_cast<uint64_t>(thread_rob->capacity()));
                 }
+                // An instruction outside the current fetch window, or after a taken branch, starts a new fetch block.
+                const uint64_t window = ip / fetch_window_bytes;
+                const bool new_block = window != block_window_ || block_ended_by_taken_;
+                if ( fetch_blocks_per_cycle > 0 && new_block && blocks_this_cycle_ >= fetch_blocks_per_cycle ) return false;
                 if ( bundle->getInstructionCount() < (thread_rob->capacity() - thread_rob->size()) ) {
+                    if ( new_block ) {
+                        blocks_this_cycle_++;
+                        block_window_ = window;
+                        block_ended_by_taken_ = false;
+                    }
                     bool bundle_has_branch = false;
                     for ( uint32_t i = 0; i < bundle->getInstructionCount(); ++i ) {
                         VanadisInstruction* next_ins = bundle->getInstructionByIndex(i);
@@ -215,7 +233,15 @@ public:
                             const uint64_t predicted_address =
                                 branch_predictor->predictNext(ip, ip + bundle->pcIncrement(), next_spec_ins->getBranchClass());
                             next_spec_ins->setSpeculatedAddress(predicted_address);
-                            if ( predicted_address != ip + bundle->pcIncrement() ) taken_this_cycle_++;
+                            if ( predicted_address != ip + bundle->pcIncrement() ) {
+                                taken_this_cycle_++;
+                                block_ended_by_taken_ = true;
+                                // A call or an indirect branch ends the cycle's fetch.
+                                const VanadisArm64Branch* a64_branch = dynamic_cast<const VanadisArm64Branch*>(next_ins);
+                                if ( fetch_blocks_per_cycle > 0 && a64_branch != nullptr && a64_branch->endsFetchCycle() ) {
+                                    blocks_this_cycle_ = fetch_blocks_per_cycle;
+                                }
+                            }
                             ip                = predicted_address;
                             bundle_has_branch = true;
                         }
@@ -297,6 +323,12 @@ protected:
     uint32_t                               taken_branches_per_cycle = 0;
     uint32_t                               taken_this_cycle_ = 0;
     uint64_t                               taken_cycle_ = UINT64_MAX;
+    // The fetch blocks of this cycle: the window of the current one, whether a taken branch ended it.
+    uint32_t                               fetch_window_bytes = 32;
+    uint32_t                               fetch_blocks_per_cycle = 0;
+    uint32_t                               blocks_this_cycle_ = 0;
+    uint64_t                               block_window_ = UINT64_MAX;
+    bool                                   block_ended_by_taken_ = false;
 
     void readTimingTable(SST::Params& params)
     {
@@ -1157,6 +1189,13 @@ protected:
     {
         add(bundle, new VanadisStoreInstruction(addr, hw_thr, options, base, off, value, bytes, MEM_TRANSACTION_NONE, STORE_FP_REGISTER));
     }
+    // The last micro-op of the bundle, the second register of a load pair, issues with the first in one load slot.
+    void shareLoadPortWithPrevious(VanadisInstructionBundle* bundle)
+    {
+        if ( ! timing_given_ ) return;
+        VanadisLoadInstruction* load = dynamic_cast<VanadisLoadInstruction*>(bundle->getInstructionByIndex(bundle->getInstructionCount() - 1));
+        if ( load != nullptr ) load->markSharesLoadPort();
+    }
     // The last micro-op of the bundle, the second register of a store pair, goes to memory with the first in one store port.
     void sharePortWithPrevious(VanadisInstructionBundle* bundle)
     {
@@ -1360,6 +1399,7 @@ protected:
             if ( load ) {
                 loadFp(bundle, addr, base, access_off, rt, bytes);
                 loadFp(bundle, addr, base, access_off + bytes, rt2, bytes);
+                if ( bytes <= 8 ) shareLoadPortWithPrevious(bundle);
             }
             else {
                 storeFp(bundle, addr, base, access_off, rt, bytes);
@@ -1370,6 +1410,8 @@ protected:
         else if ( load ) {
             loadInt(bundle, addr, use_base, access_off, rt == 31 ? A64Reg::T1 : static_cast<uint16_t>(rt), bytes, sign);
             loadInt(bundle, addr, use_base, access_off + bytes, rt2 == 31 ? A64Reg::T1 : static_cast<uint16_t>(rt2), bytes, sign);
+            // LDP of W registers is one load micro-op; LDP of X registers and LDPSW take two (X925 guide, table 3-7).
+            if ( bytes == 4 && !sign ) shareLoadPortWithPrevious(bundle);
         }
         else {
             storeInt(bundle, addr, base, access_off, rz(rt), bytes);

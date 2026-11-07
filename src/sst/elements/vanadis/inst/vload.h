@@ -215,7 +215,13 @@ public:
 
     virtual uint16_t getRegisterOffset() const { return 0; }
 
+    // The second register of a load pair whose registers fit one load port: it takes no issue slot of its own.
+    bool sharesLoadPort() const { return shares_load_port_; }
+    void markSharesLoadPort() { shares_load_port_ = true; }
+
 protected:
+    bool shares_load_port_ = false;
+
     uint64_t access_address = 0;
     uint64_t access_width = 0;
     const bool               signed_extend;

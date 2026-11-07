@@ -1482,6 +1482,10 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
                 rob_front->markFrontOfROB();
                 // A store at the front goes to memory in this retire stage, so several can retire per cycle.
                 if ( rename_at_dispatch && INST_STORE == rob_front->getInstFuncType() ) lsq->commitFrontStore(rob_num);
+            } else if ( rename_at_dispatch && INST_STORE == rob_front->getInstFuncType() ) {
+                // A store that found no free store port in an earlier cycle tries again; without a port the thread waits.
+                lsq->commitFrontStore(rob_num);
+                if ( ! rob_front->completedExecution() ) return 2;
             } else {
                 // Return 2 because instruction is front of ROB but has not executed and
                 // so we cannot make progress any more this cycle

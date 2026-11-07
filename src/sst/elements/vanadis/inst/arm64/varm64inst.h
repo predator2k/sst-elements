@@ -264,6 +264,9 @@ public:
 
     const char*         getInstCode() const override { return name; }
 
+    // A call (BL, BLR) or an indirect branch (BR, RET): the front end follows no other branch in the cycle it is taken.
+    bool endsFetchCycle() const { return VanadisArm64BranchKind::REG == kind || count_isa_int_reg_out > 0; }
+
     void printToBuffer(char* buffer, size_t buffer_size) override
     {
         snprintf(buffer, buffer_size, "%s offset=%" PRId64 " sel=%u", name, imm, selector);
