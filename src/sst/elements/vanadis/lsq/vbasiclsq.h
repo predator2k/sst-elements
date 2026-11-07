@@ -321,11 +321,15 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             stat_store_buffer_entries_->addData(stores_pending_size_);
 
             current_cycle_ = cycle;
+            // A forwarded response is handled in this tick, not between ticks as one from memory: its extra FP cycles count
+            // from this cycle.
+            handling_in_tick_ = true;
             while( ! forwarded_loads_.empty() && forwarded_loads_.front().ready_cycle <= cycle ) {
                 StandardMem::ReadResp* response = forwarded_loads_.front().response;
                 forwarded_loads_.pop_front();
                 std_mem_handlers_->handle(response);
             }
+            handling_in_tick_ = false;
             while( ! delayed_fp_loads_.empty() && delayed_fp_loads_.front().ready_cycle <= cycle ) {
                 StandardMem::ReadResp* response = delayed_fp_loads_.front().response;
                 delayed_fp_loads_.pop_front();
@@ -479,7 +483,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                     if(lsq_->fp_load_extra_cycles_ > 0 && load_ins->getValueRegisterType() == LOAD_FP_REGISTER) {
                         if(lsq_->delayed_ids_.erase(ev->getID()) == 0) {
                             lsq_->delayed_ids_.insert(ev->getID());
-                            lsq_->delayed_fp_loads_.push_back({ lsq_->current_cycle_ + 1 + lsq_->fp_load_extra_cycles_,
+                            lsq_->delayed_fp_loads_.push_back({ lsq_->current_cycle_ + (lsq_->handling_in_tick_ ? 0 : 1) + lsq_->fp_load_extra_cycles_,
                                 load_ins->getHWThread(), ev });
                             return;
                         }
@@ -1744,6 +1748,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         // Responses of loads into vector registers that wait fp_load_extra_cycles, and their request ids.
         const uint64_t fp_load_extra_cycles_;
         std::deque<ForwardedLoad> delayed_fp_loads_;
+        bool handling_in_tick_ = false;
         std::set<StandardMem::Request::id_t> delayed_ids_;
 
         // Loads that wait for an older store.

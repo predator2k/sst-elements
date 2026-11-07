@@ -197,11 +197,12 @@ public:
     {
         cycle_count  = cycle;
         bool success = false;
+        // A fetch block that the previous cycle did not finish goes on in this one without starting a new block: the
+        // fetch queue between fetch and decode holds the rest of it.
         if ( cycle != taken_cycle_ ) {
             taken_cycle_ = cycle;
             taken_this_cycle_ = 0;
             blocks_this_cycle_ = 0;
-            block_window_ = UINT64_MAX;
         }
         // The front end follows taken_branches_per_cycle predicted-taken branches per cycle.
         if ( taken_branches_per_cycle > 0 && taken_this_cycle_ >= taken_branches_per_cycle ) return false;
@@ -288,6 +289,13 @@ public:
         uint32_t value = 0;
         if ( 1 != fscanf(fp, "FPSR %" SCNx32 "\n", &value) ) output_->fatal(CALL_INFO, -1, "The checkpoint file has no FPSR.\n");
         fp_state_.fpsr = value;
+    }
+
+    // A redirect after a misspeculation starts a new fetch block.
+    void clearDecoderAfterMisspeculate() override
+    {
+        block_window_ = UINT64_MAX;
+        block_ended_by_taken_ = false;
     }
 
     // Cycle count of the decoder and the counter frequency, read by MRS CNTVCT_EL0 and CNTFRQ_EL0.
