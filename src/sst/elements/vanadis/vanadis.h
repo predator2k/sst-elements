@@ -123,6 +123,7 @@ public:
         { "hardware_threads", "Number of hardware threads in this core", "1" },
         { "clock", "Core clock frequency", "1GHz" },
         { "reorder_slots", "Number of slots in the reorder buffer", "64"},
+        { "misprediction_extra_cycles", "Cycles decode waits after a branch misprediction, above the time the flush takes", "0"},
         { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },
         { "physical_fp_registers", "Number of physical floating point registers per hardware thread", "128" },
@@ -309,6 +310,8 @@ private:
     std::vector<VanadisInstruction*> int_phys_reg_producer;
     std::vector<VanadisInstruction*> fp_phys_reg_producer;
     std::vector<size_t> renamed_in_rob;
+    uint64_t misprediction_extra_cycles = 0;
+    std::vector<uint64_t> decode_resume_cycle;
 
     VanadisRegisterStack* int_register_stack = nullptr;
     VanadisRegisterStack* fp_register_stack = nullptr;

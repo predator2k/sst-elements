@@ -104,6 +104,7 @@ VanadisARM64Decoder::decodeSimdThreeSame(uint64_t addr, uint32_t ins, VanadisIns
             i->b = Q ? 16 : 8;
             i->c = s;
             i->d = U ? 1 : 0;
+            i->setExtraExecuteCycles(fp_mul_extra_cycles);
             return true;
         }
         if ( !scalar && sz && !Q ) return false;
@@ -131,6 +132,7 @@ VanadisARM64Decoder::decodeSimdThreeSame(uint64_t addr, uint32_t ins, VanadisIns
         i->a = a;
         i->b = scalar ? (1u << a) : (Q ? 16 : 8);
         i->c = code;
+        if ( code == 0x19 || code == 0x39 || code == 0x5B || code == 0x1B ) i->setExtraExecuteCycles(fp_mul_extra_cycles);    // FMLA, FMLS, FMUL, FMULX
         return true;
     }
     bool valid = true;
@@ -194,6 +196,7 @@ VanadisARM64Decoder::decodeSimdThreeSameFp16(uint64_t addr, uint32_t ins, Vanadi
     i->a = 1;
     i->b = scalar ? 2 : (Q ? 16 : 8);
     i->c = code;
+    if ( code == 0x19 || code == 0x39 || code == 0x5B || code == 0x1B ) i->setExtraExecuteCycles(fp_mul_extra_cycles);    // FMLA, FMLS, FMUL, FMULX
     return true;
 }
 
@@ -253,6 +256,7 @@ VanadisARM64Decoder::decodeSimdThreeExt(uint64_t addr, uint32_t ins, VanadisInst
         if ( size == 3 ) {
             auto* i = op(bundle, addr, "BFMLAL", INST_FP_ARITH, simdBfMlal, { A64Reg::FPCR }, {}, { rn, rm, rd }, { rd });
             i->c = Q ? 1 : 0;
+            i->setExtraExecuteCycles(fp_mul_extra_cycles);
             return true;
         }
         return false;
@@ -859,6 +863,7 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
         i->b = scalar ? (1u << a) : reg_bytes;
         i->c = code;
         i->imm = index;
+        i->setExtraExecuteCycles(fp_mul_extra_cycles);
         return true;
     }
     // FMLAL, FMLSL, FMLAL2, FMLSL2 by element.
@@ -869,6 +874,7 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
         i->c = (opcode & 4) ? 1 : 0;
         i->d = (U ? 1u : 0u) | 2u;
         i->imm = (H << 2) | (L << 1) | M;
+        i->setExtraExecuteCycles(fp_mul_extra_cycles);
         return true;
     }
     // Dot products and the BFloat16 forms.
@@ -903,6 +909,7 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
         i->c = Q ? 1 : 0;
         i->d = 1;
         i->imm = (H << 2) | (L << 1) | M;
+        i->setExtraExecuteCycles(fp_mul_extra_cycles);
         return true;
     }
     // The integer forms: H or S elements.

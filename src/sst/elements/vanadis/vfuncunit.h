@@ -67,7 +67,7 @@ public:
 
     void insertInstruction(VanadisInstruction* ins) {
         //assert(accept_this_cycle == true);
-        pending_execute.push_back(new VanadisFunctionalUnitInsRecord(ins, latency));
+        pending_execute.push_back(new VanadisFunctionalUnitInsRecord(ins, latency + ins->getExtraExecuteCycles()));
         accept_this_cycle = false;
     }
 

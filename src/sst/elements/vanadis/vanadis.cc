@@ -110,6 +110,8 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     int_phys_reg_producer.assign(int_reg_count, nullptr);
     fp_phys_reg_producer.assign(fp_reg_count, nullptr);
     renamed_in_rob.assign(hw_threads, 0);
+    misprediction_extra_cycles = params.find<uint64_t>("misprediction_extra_cycles", 0);
+    decode_resume_cycle.assign(hw_threads, 0);
 
     output->verbose(
         CALL_INFO, 2, 0,
@@ -607,7 +609,7 @@ VanadisCore::performDecode(const uint64_t cycle)
             const int64_t rob_before_decode = (int64_t)rob[decode_start_thread_]->size();
             bool decode_or_fetch = false;
             // If thread is not masked then attempt decode from it
-            if ( !halted_masks[decode_start_thread_] ) {
+            if ( !halted_masks[decode_start_thread_] && cycle >= decode_resume_cycle[decode_start_thread_] ) {
                 decode_or_fetch = thread_decoders[decode_start_thread_]->tick(cycle);
                 const int64_t rob_after_decode = (int64_t)rob[decode_start_thread_]->size();
                 const int64_t decoded_cycle    = (rob_after_decode - rob_before_decode);
@@ -1235,6 +1237,7 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
                 #endif
                 handleMisspeculate(ins_thread, pipeline_reset_addr);
                 stat_branch_mispredicts->addData(1);
+                decode_resume_cycle[ins_thread] = cycle + misprediction_extra_cycles;
             }
 
             delete rob_front;

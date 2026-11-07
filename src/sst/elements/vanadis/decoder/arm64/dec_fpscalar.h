@@ -63,6 +63,7 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
             { rn16, rm16, static_cast<uint16_t>(bits(ins, 14, 10)) }, { rd16 });
         i->a = fmt;
         i->c = (static_cast<uint32_t>(bit(ins, 21)) << 1) | static_cast<uint32_t>(bit(ins, 15));
+        i->setExtraExecuteCycles(fp_mul_extra_cycles);
         return true;
     }
 
@@ -108,6 +109,7 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
         auto* i = fpOp(bundle, addr, "FDP2", opcode == 1 ? INST_FP_DIV : INST_FP_ARITH, fpDp2, { A64Reg::FPCR }, {}, { rn16, rm16 }, { rd16 });
         i->a = fmt;
         i->c = opcode;
+        if ( opcode == 0 || opcode == 8 ) i->setExtraExecuteCycles(fp_mul_extra_cycles);    // FMUL, FNMUL
         return true;
     }
     if ( lo2 == 3 ) {

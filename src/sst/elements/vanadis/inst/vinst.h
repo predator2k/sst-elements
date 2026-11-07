@@ -80,6 +80,7 @@ class VanadisInstruction
             has_issued_           = false;
             has_registers_assigned_ = false;
             is_serializing_       = false;
+            extra_execute_cycles_ = 0;
             end_uop_group_        = false;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -116,6 +117,7 @@ class VanadisInstruction
             has_issued_           = copy_me.has_issued_;
             has_registers_assigned_ = copy_me.has_registers_assigned_;
             is_serializing_       = copy_me.is_serializing_;
+            extra_execute_cycles_ = copy_me.extra_execute_cycles_;
             end_uop_group_        = copy_me.end_uop_group_;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -423,6 +425,10 @@ class VanadisInstruction
         bool isSerializing() const { return is_serializing_; }
         void markSerializing() { is_serializing_ = true; }
 
+        // Cycles the instruction takes in its functional unit above the latency of the unit.
+        uint16_t getExtraExecuteCycles() const { return extra_execute_cycles_; }
+        void setExtraExecuteCycles(const uint16_t cycles) { extra_execute_cycles_ = cycles; }
+
         // With rename_at_dispatch a store issues when its address is known; these inputs are read when it goes to memory.
         virtual bool isStoreDataIntRegIn(const uint16_t index) const { return false; }
         virtual bool isStoreDataFPRegIn(const uint16_t index) const { return false; }
@@ -481,6 +487,7 @@ class VanadisInstruction
         bool has_issued_;
         bool has_registers_assigned_;
         bool is_serializing_;
+        uint16_t extra_execute_cycles_;
         bool end_uop_group_;
         bool is_front_of_rob_;
         bool has_rob_slot_;

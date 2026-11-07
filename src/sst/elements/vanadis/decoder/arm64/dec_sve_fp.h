@@ -92,6 +92,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             i->a = a;
             i->c = is_mul ? 2 : (sub ? 1 : 0);
             i->imm = index;
+            i->setExtraExecuteCycles(fp_mul_extra_cycles);
             return true;
         }
         if ( (ins & 0xFF208000) == 0x64000000 ) {
@@ -134,6 +135,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             auto* i = op(bundle, addr, "FMLAL.Z", INST_FP_ARITH, is_bf ? bfmlalZ : fmlalZ, { fpcr }, {}, { rd, rn, rm }, { rd });
             i->c = s;
             i->d = bit(ins, 10);
+            i->setExtraExecuteCycles(fp_mul_extra_cycles);
             return true;
         }
         if ( (ins & 0xFFE0D000) == 0x64A04000 || (ins & 0xFFE0D000) == 0x64E04000 ) {
@@ -144,6 +146,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             i->c = s;
             i->d = bit(ins, 10) | 2;
             i->imm = (bits(ins, 20, 19) << 1) | static_cast<uint32_t>(bit(ins, 11));
+            i->setExtraExecuteCycles(fp_mul_extra_cycles);
             return true;
         }
         if ( (ins & 0xFFE0FC00) == 0x64608000 ) {
@@ -178,11 +181,13 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             auto* i = op(bundle, addr, "FMLA.Z", INST_FP_ARITH, predFpMulAdd, { fpcr }, {}, { pg, rd, rn, rm }, { rd });
             i->a = size;
             i->c = bits(ins, 14, 13);
+            i->setExtraExecuteCycles(fp_mul_extra_cycles);
             return true;
         }
         auto* i = op(bundle, addr, "FMAD.Z", INST_FP_ARITH, predFpMulAdd, { fpcr }, {}, { pg, rd, rn, rm }, { rd });
         i->a = size;
         i->c = 4 + bits(ins, 14, 13);
+        i->setExtraExecuteCycles(fp_mul_extra_cycles);
         return true;
     }
     const uint32_t b1513 = bits(ins, 15, 13);
@@ -193,6 +198,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         auto* i = op(bundle, addr, "FARITH.Z", INST_FP_ARITH, unpredFp, { fpcr }, {}, { rn, rm }, { rd });
         i->a = size;
         i->c = k;
+        if ( k == 2 || k == 3 ) i->setExtraExecuteCycles(fp_mul_extra_cycles);    // FMUL, FTSMUL
         return true;
     }
     if ( (ins & 0xFF3EFC00) == 0x650E3000 ) {
@@ -266,6 +272,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             auto* i = op(bundle, addr, code == 12 || code == 13 ? "FDIV.Z" : "FBIN.Z", code == 12 || code == 13 ? INST_FP_DIV : INST_FP_ARITH, predFpBin, { fpcr }, {}, { pg, rd, rn }, { rd });
             i->a = size;
             i->c = code;
+            if ( code == 2 || code == 10 ) i->setExtraExecuteCycles(fp_mul_extra_cycles);    // FMUL, FMULX
             return true;
         }
         if ( k20 == 3 && bits(ins, 9, 6) == 0 ) {
