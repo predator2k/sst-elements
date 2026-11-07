@@ -743,7 +743,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
 
                         load_ins->finishLoad(lsq_->register_files_->at(load_entry->getHWThread()));
                         load_ins->markExecuted();
-                        load_ins->setExecutedCycle(current_cycle_);
+                        load_ins->setExecutedCycle(lsq_->current_cycle_);
                         lsq_->stat_loads_executed_->addData(1);
                         lsq_->loads_pending_.erase(load_itr);
                         delete load_entry;
