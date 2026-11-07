@@ -58,8 +58,6 @@ Cache::Cache(ComponentId_t id, Params &params) : Component(id) {
     uint64_t banks = params.find<uint64_t>("banks", 0);
     bankStatus_.resize(banks, false);
     banked_ = banks;
-    sameLineAccessesPerCycle_ = params.find<uint32_t>("same_line_accesses_per_cycle", 1);
-    if (sameLineAccessesPerCycle_ == 0) out_->fatal(CALL_INFO, -1, "%s, same_line_accesses_per_cycle must be at least 1\n", getName().c_str());
 
     /* Create clock, deadlock timeout, etc. */
     createClock(params);

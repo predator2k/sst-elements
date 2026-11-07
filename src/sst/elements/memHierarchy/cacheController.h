@@ -88,7 +88,6 @@ public:
             {"force_noncacheable_reqs", "(bool) Used for verification purposes. All requests are considered to be 'noncacheable'. Options: 0[off], 1[on]", "false"},
             {"min_packet_size",         "(string) Number of bytes in a request/response not including payload (e.g., addr + cmd). Specify in B.", "8B"},
             {"banks",                   "(uint) Number of cache banks: One access per bank per cycle. Use '0' to simulate no bank limits (only limits on bandwidth then are max_requests_per_cycle and *_link_width", "0"},
-            {"same_line_accesses_per_cycle", "(uint) Without banks: accesses to one cache line accepted in a cycle", "1"},
             {"node",			        "(uint) Node number in multinode environment", "0"})
 
     SST_ELI_DOCUMENT_PORTS(
@@ -263,8 +262,8 @@ private:
     void checkTimeout();
 
     // Arbitrate for bank and/or line access
-    bool arbitrateAccess(Addr addr, MemEvent* event);
-    void updateAccessStatus(Addr addr, MemEvent* event);
+    bool arbitrateAccess(Addr addr);
+    void updateAccessStatus(Addr addr);
 
     // Process coherence initialization events
     void processInitCoherenceEvent(MemEventInitCoherence* event, bool src);
@@ -304,10 +303,7 @@ private:
     uint64_t                    timestamp_;
     int                         requestsThisCycle_;
     std::vector<bool>           bankStatus_;
-    // Accesses to each line in this cycle; NON_READ_ACCESS marks a line that had an access other than a read.
-    std::map<Addr, uint32_t>    addrsThisCycle_;
-    uint32_t                    sameLineAccessesPerCycle_ = 1;
-    static constexpr uint32_t   NON_READ_ACCESS = 0x80000000u;
+    std::set<Addr>              addrsThisCycle_;
     std::list<MemEventBase*>    retryBuffer_;
     std::list<MemEventBase*>    eventBuffer_;
     std::queue<MemEventBase*>   prefetchBuffer_;
