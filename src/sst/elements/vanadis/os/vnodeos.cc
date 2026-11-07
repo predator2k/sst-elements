@@ -118,7 +118,7 @@ VanadisNodeOSComponent::VanadisNodeOSComponent(SST::ComponentId_t id, SST::Param
         // we don't use it
         const std::string page_order = params.find<std::string>("physical_page_order", "first_free");
         if ( "random" == page_order ) {
-            phys_mem_mgr_->setRandomOrder( params.find<uint64_t>("physical_page_seed", 1) );
+            phys_mem_mgr_->setRandomOrder( params.find<uint64_t>("physical_page_seed", 1), params.find<uint32_t>("physical_page_colors", 1) );
         } else if ( "first_free" != page_order ) {
             output_->fatal(CALL_INFO, -1, "physical_page_order must be first_free or random, not '%s'\n", page_order.c_str());
         }
@@ -597,13 +597,13 @@ void VanadisNodeOSComponent::writeMem( OS::ProcessInfo* process, uint64_t virt_a
     output_->verbose(CALL_INFO, 8, VANADIS_OS_DBG_PAGE_FAULT,"virt_addr=%#" PRIx64 " length=%zu perm=%x\n",virt_addr,data->size(), perms);
     #endif
     OS::Page* page;
+    uint32_t vpn = virt_addr >> page_shift_;
     try {
-        page = allocPage( );
+        page = allocPage( vpn );
     } catch ( int err ) {
         output_->fatal(CALL_INFO, -1, "Error: ran out of physical memory\n");
     }
 
-    uint32_t vpn = virt_addr >> page_shift_;
 
     process->mapVirtToPage( vpn, page );
 
@@ -834,7 +834,7 @@ void VanadisNodeOSComponent::pageFault( PageFault *info )
             }
 
             try {
-                new_page = allocPage( );
+                new_page = allocPage( vpn );
             } catch ( int err ) {
                 output_->fatal(CALL_INFO, -1, "Error: ran out of physical memory\n");
             }
@@ -915,7 +915,7 @@ void VanadisNodeOSComponent::pageFault( PageFault *info )
         // if there is no physical backing for this virtual page, get a page
         if ( nullptr == page ) {
             try {
-                page = allocPage( );
+                page = allocPage( vpn );
             } catch ( int err ) {
                 output_->fatal(CALL_INFO, -1, "Error: ran out of physical memory\n");
             }

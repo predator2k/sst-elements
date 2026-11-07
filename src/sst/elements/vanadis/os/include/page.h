@@ -40,6 +40,12 @@ class Page {
         PageDbg("ppn=%" PRIu32 "\n",ppn_);
     }
 
+    // A page that backs virtual page vpn; the page order of mem may give it the colour of vpn.
+    Page( PhysMemManager* mem, uint32_t vpn, bool ) : mem_(mem), ref_cnt_(1) {
+        ppn_ = mem_->allocPage( PhysMemManager::PageSize::FourKB, vpn );
+        PageDbg("ppn=%" PRIu32 "\n",ppn_);
+    }
+
     Page( PhysMemManager* mem, uint32_t ppn, uint32_t ref_cnt ) : mem_(mem), ppn_(ppn), ref_cnt_(ref_cnt) {
     }
 

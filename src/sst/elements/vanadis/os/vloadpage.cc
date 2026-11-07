@@ -35,7 +35,7 @@ void loadPages( SST::Output* output, SST::Interfaces::StandardMem* mem_if, MMU_L
         int physPageNum;
         if ( mmu ) {
             try {
-                physPageNum = memMgr->allocPage( PhysMemManager::PageSize::FourKB );
+                physPageNum = memMgr->allocPage( PhysMemManager::PageSize::FourKB, static_cast<uint32_t>(pageVirtAddr >> shift) );
             } catch ( int err ) {
                 output->fatal(CALL_INFO, -1, "Error: ran out of physical memory\n");
             }

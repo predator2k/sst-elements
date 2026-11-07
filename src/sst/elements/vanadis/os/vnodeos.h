@@ -70,6 +70,7 @@ public:
         { "useMMU", "Whether an MMU subcomponent is being used.", "False" },
         { "physical_page_order", "Order in which the MMU gives out physical pages: first_free (the lowest free page) or random (a seeded random order, so the cache sets of a buffer do not follow its virtual addresses)", "first_free" },
         { "physical_page_seed", "Seed of the random physical page order", "1" },
+        { "physical_page_colors", "With the random order, a page for a virtual page has the same number modulo this as the virtual page, as a cache indexed by the virtual address sees it; 1 is no such constraint", "1" },
         { "process%(processnum)d.env_count", "Number of environment variables to pass to the process", "0"},
         { "process%(processnum)d.env%(argnum)d", "Environment variable to pass to the process. Example: 'OMPNUMTHREADS=64'. 'argnum' should be contiguous starting at 0 and ending at env_count-1", ""},
         { "proccess%(processnum)d.exe", "Name of executable, including path", NULL},
@@ -421,6 +422,15 @@ private:
 
     OS::Page* allocPage() {
         auto page = new OS::Page(phys_mem_mgr_);
+        #ifdef VANADIS_BUILD_DEBUG
+        output_->verbose(CALL_INFO, 1, VANADIS_OS_DBG_PAGE_FAULT,"ppn=%" PRIu32 "\n",page->getPPN());
+        #endif
+        return page;
+    }
+
+    // A page that backs virtual page vpn.
+    OS::Page* allocPage( uint32_t vpn ) {
+        auto page = new OS::Page(phys_mem_mgr_, vpn, true);
         #ifdef VANADIS_BUILD_DEBUG
         output_->verbose(CALL_INFO, 1, VANADIS_OS_DBG_PAGE_FAULT,"ppn=%" PRIu32 "\n",page->getPPN());
         #endif

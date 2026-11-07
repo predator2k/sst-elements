@@ -122,7 +122,12 @@ class PhysMemManager {
     }
 
     uint32_t allocPage( PageSize pageSize ) {
-        return findFreePage( pageSize );
+        return findFreePage( pageSize, UINT32_MAX );
+    }
+
+    // A page for virtual page vpn: in the random order, one whose number has the colour of vpn (setRandomOrder).
+    uint32_t allocPage( PageSize pageSize, uint32_t vpn ) {
+        return findFreePage( pageSize, vpn );
     }
 
     /*
@@ -130,11 +135,14 @@ class PhysMemManager {
      * hands out pages freed in the order the system freed them does, so the physical colours of a buffer's pages, and with
      * them its sets in a physically indexed cache, are unrelated to its virtual addresses.
      * Handling: each later allocation starts its search for a free page at a position drawn from a xorshift generator
-     * with this seed. Emits nothing.
+     * with this seed. With colors above 1, a page given out for a known virtual page has the same number modulo colors
+     * as that virtual page, as a cache indexed by more bits than the page offset (a virtually indexed L1) sees it.
+     * Emits nothing.
      */
-    void setRandomOrder( uint64_t seed ) {
+    void setRandomOrder( uint64_t seed, uint32_t colors ) {
         m_random_state = seed ^ 0x9E3779B97F4A7C15ull;
         if ( 0 == m_random_state ) m_random_state = 0x9E3779B97F4A7C15ull;
+        m_colors = colors > 0 ? colors : 1;
     }
 
 
@@ -162,7 +170,7 @@ class PhysMemManager {
 
         fprintf(fp,"m_numAllocated %" PRIu64 "\n",m_numAllocated);
         m_bitMap.checkpoint(fp);
-        if ( 0 != m_random_state ) fprintf(fp,"m_random_state %" PRIu64 "\n",m_random_state);
+        if ( 0 != m_random_state ) fprintf(fp,"m_random_state %" PRIu64 " %" PRIu32 "\n",m_random_state,m_colors);
     }
     void checkpointLoad( SST::Output* output , std::string dir ) {
         std::stringstream filename;
@@ -174,7 +182,11 @@ class PhysMemManager {
         output->verbose(CALL_INFO, 0, VANADIS_DBG_CHECKPOINT,"m_numAllocated %" PRIu64 "\n",m_numAllocated);
         m_bitMap.checkpointLoad(output,fp);
         uint64_t state = 0;
-        if ( 1 == fscanf(fp,"m_random_state %" SCNu64 "\n",&state) ) m_random_state = state;
+        uint32_t colors = 1;
+        if ( 2 == fscanf(fp,"m_random_state %" SCNu64 " %" SCNu32 "\n",&state,&colors) ) {
+            m_random_state = state;
+            m_colors = colors;
+        }
     }
 
   private:
@@ -187,7 +199,19 @@ class PhysMemManager {
         }
     }
 
-    int findFreePage( PageSize pageSize ) {
+    // A free page whose number is vpn modulo the colours, searched from start onwards with wrap-around.
+    size_t findFreeColoredPage( size_t start, uint32_t vpn ) {
+        const size_t pages = m_bitMap.bits();
+        const size_t color = vpn % m_colors;
+        size_t page = start - start % m_colors + color;
+        for ( size_t tried = 0; tried < pages; tried += m_colors, page += m_colors ) {
+            if ( page >= pages ) page = color;
+            if ( ! m_bitMap.getBit( page ) ) return page;
+        }
+        throw -1;
+    }
+
+    int findFreePage( PageSize pageSize, uint32_t vpn ) {
         if ( FourKB == pageSize ) {
             size_t start = 0;
             if ( 0 != m_random_state ) {
@@ -197,10 +221,14 @@ class PhysMemManager {
                 start = m_random_state % m_bitMap.bits();
             }
             size_t page;
-            try {
-                page = m_bitMap.findFirstEmptyBit(start);
-            } catch ( int ) {
-                page = m_bitMap.findFirstEmptyBit(0);
+            if ( 0 != m_random_state && m_colors > 1 && UINT32_MAX != vpn ) {
+                page = findFreeColoredPage( start, vpn );
+            } else {
+                try {
+                    page = m_bitMap.findFirstEmptyBit(start);
+                } catch ( int ) {
+                    page = m_bitMap.findFirstEmptyBit(0);
+                }
             }
             m_bitMap.setBit( page );
             ++m_numAllocated;
@@ -233,8 +261,9 @@ class PhysMemManager {
 
     BitMap m_bitMap;
     uint64_t m_numAllocated;
-    //! State of the generator of setRandomOrder; 0 gives out the first free page.
+    //! State of the generator of setRandomOrder (0 gives out the first free page) and its colours.
     uint64_t m_random_state = 0;
+    uint32_t m_colors = 1;
 };
 
 #endif
