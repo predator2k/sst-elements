@@ -81,7 +81,8 @@ VanadisARM64Decoder::sveContigLoad(uint64_t addr, VanadisInstructionBundle* bund
             std::vector<uint16_t> in { pg, A64Reg::VT0 };
             if ( c != 0 ) in.insert(in.end(), zs.begin(), zs.end());
             auto* i = op(bundle, addr, "SVE.MERGE", INST_FP_ARITH, contigMerge, {}, {}, in, zs);
-            tc(i, sveStructMergeClass(nreg));
+            // The permute latency of a structure load is that of the merge of its last chunk; the earlier merges take none.
+            tc(i, c + chunk >= image ? sveStructMergeClass(nreg) : A64Tc::INT_INTERNAL);
             i->a = dt.log2_ebytes;
             i->b = dt.mbytes;
             i->c = nreg;
