@@ -125,6 +125,7 @@ public:
         { "reorder_slots", "Number of slots in the reorder buffer", "64"},
         { "misprediction_extra_cycles", "Cycles decode waits after a branch misprediction, above the time the flush takes", "0"},
         { "renames_per_cycle", "With rename_at_dispatch, micro-ops renamed per cycle", "decodes_per_cycle"},
+        { "dividers_block", "A divider takes no new instruction until the current one has executed", "false"},
         { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },
         { "physical_fp_registers", "Number of physical floating point registers per hardware thread", "128" },
@@ -164,6 +165,7 @@ public:
         { "instructions_retired", "Number of instructions retired", "instructions", 1 },
         { "instructions_decoded", "Number of instructions decoded", "instructions", 1 },
         { "branch_mispredicts", "Number of retired branches which were mis-predicted", "instructions", 1 },
+        { "memory_order_violations", "Loads that read before an older store knew its address", "events", 1 },
         { "branches", "Number of retired branches", "instructions", 1 },
         { "loads_issued", "Number of load instructions issued to the LSQ", "instructions", 1 },
         { "stores_issued", "Number of store instructions issued to the LSQ", "instructions", 1 },
@@ -311,6 +313,25 @@ private:
     std::vector<VanadisInstruction*> int_phys_reg_producer;
     std::vector<VanadisInstruction*> fp_phys_reg_producer;
     std::vector<size_t> renamed_in_rob;
+    // rename_at_dispatch: the program order of memory operations; the load that read before an older store knew its
+    // address, whose instruction is fetched again when it reaches the front of the reorder buffer; and the loads that
+    // did this, which wait for older stores from then on, until the table is cleared.
+    std::vector<uint64_t> next_memory_sequence;
+    std::vector<uint64_t> violating_load_address;
+    std::vector<uint64_t> violating_load_sequence;
+    std::vector<uint8_t> has_order_violation;
+    std::vector<uint64_t> last_retired_address;
+    std::vector<uint8_t> load_waits_for_stores;
+    static constexpr uint32_t LOAD_WAIT_TABLE_ENTRIES = 4096;
+    static constexpr uint64_t LOAD_WAIT_CLEAR_CYCLES = 1048576;
+    void onStoreAddressKnown(const VanadisInstruction* store, const uint64_t address, const uint64_t width);
+    bool loadWaitsForStores(const VanadisInstruction* load) const;
+
+    // rename_at_dispatch: what older memory operations have not issued this cycle.
+    static constexpr int UNISSUED_LOAD = 1;
+    static constexpr int UNISSUED_STORE = 2;
+    static constexpr int UNISSUED_ORDERED = 4;
+
     uint32_t renames_per_cycle = 0;
     uint64_t misprediction_extra_cycles = 0;
     std::vector<uint64_t> decode_resume_cycle;
@@ -362,6 +383,7 @@ private:
     Statistic<uint64_t>* stat_loads_issued = nullptr;
     Statistic<uint64_t>* stat_stores_issued = nullptr;
     Statistic<uint64_t>* stat_branch_mispredicts = nullptr;
+    Statistic<uint64_t>* stat_order_violations = nullptr;
     Statistic<uint64_t>* stat_branches = nullptr;
     Statistic<uint64_t>* stat_cycles = nullptr;
     Statistic<uint64_t>* stat_rob_entries = nullptr;

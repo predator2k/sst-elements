@@ -107,10 +107,6 @@ class VanadisBasicStorePendingEntry : public VanadisBasicStoreEntry {
             requests_.clear();
         }
 
-        // The order the store entered the store queue, used to tell which stores are older than a parked load.
-        uint64_t getSequence() const { return sequence_; }
-        void setSequence(const uint64_t sequence) { sequence_ = sequence; }
-
         bool isDispatched() const { return dispatched_; }
         void markDispatched() { dispatched_ = true; }
 
@@ -200,7 +196,6 @@ class VanadisBasicStorePendingEntry : public VanadisBasicStoreEntry {
         }
 
     protected:
-        uint64_t sequence_ = 0;
         std::vector<StandardMem::Request::id_t> requests_;  // Memory requests generated for this store
         const uint64_t store_address_;  // Memory address of store
         const uint64_t store_width_;    // Number of bytes to be stored

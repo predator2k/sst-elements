@@ -81,6 +81,7 @@ class VanadisInstruction
             has_registers_assigned_ = false;
             is_serializing_       = false;
             extra_execute_cycles_ = 0;
+            memory_sequence_      = 0;
             end_uop_group_        = false;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -118,6 +119,7 @@ class VanadisInstruction
             has_registers_assigned_ = copy_me.has_registers_assigned_;
             is_serializing_       = copy_me.is_serializing_;
             extra_execute_cycles_ = copy_me.extra_execute_cycles_;
+            memory_sequence_      = copy_me.memory_sequence_;
             end_uop_group_        = copy_me.end_uop_group_;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -429,6 +431,10 @@ class VanadisInstruction
         uint16_t getExtraExecuteCycles() const { return extra_execute_cycles_; }
         void setExtraExecuteCycles(const uint16_t cycles) { extra_execute_cycles_ = cycles; }
 
+        // With rename_at_dispatch the program order of a memory operation, from 1; 0 without.
+        uint64_t getMemorySequence() const { return memory_sequence_; }
+        void setMemorySequence(const uint64_t sequence) { memory_sequence_ = sequence; }
+
         // With rename_at_dispatch a store issues when its address is known; these inputs are read when it goes to memory.
         virtual bool isStoreDataIntRegIn(const uint16_t index) const { return false; }
         virtual bool isStoreDataFPRegIn(const uint16_t index) const { return false; }
@@ -488,6 +494,7 @@ class VanadisInstruction
         bool has_registers_assigned_;
         bool is_serializing_;
         uint16_t extra_execute_cycles_;
+        uint64_t memory_sequence_;
         bool end_uop_group_;
         bool is_front_of_rob_;
         bool has_rob_slot_;

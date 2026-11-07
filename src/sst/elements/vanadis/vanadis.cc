@@ -112,6 +112,12 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     renamed_in_rob.assign(hw_threads, 0);
     misprediction_extra_cycles = params.find<uint64_t>("misprediction_extra_cycles", 0);
     decode_resume_cycle.assign(hw_threads, 0);
+    next_memory_sequence.assign(hw_threads, 1);
+    violating_load_address.assign(hw_threads, 0);
+    violating_load_sequence.assign(hw_threads, 0);
+    has_order_violation.assign(hw_threads, 0);
+    last_retired_address.assign(hw_threads, 0);
+    load_waits_for_stores.assign(LOAD_WAIT_TABLE_ENTRIES, 0);
 
     output->verbose(
         CALL_INFO, 2, 0,
@@ -280,6 +286,9 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     lsq->setRegisterFiles(&register_files);
     if ( rename_at_dispatch ) {
         lsq->setStoreDataReadyCheck([this](const VanadisInstruction* store) { return inputValuesReady(store, true); });
+        lsq->setStoreAddressListener([this](const VanadisInstruction* store, const uint64_t address, const uint64_t width) {
+            onStoreAddressKnown(store, address, width);
+        });
     }
 
     //////////////////////////////////////////////////////////////////////////////////////
@@ -315,7 +324,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
         int_div_cycles);
 
     for ( uint16_t i = 0; i < int_div_units; ++i ) {
-        fu_int_div.push_back(new VanadisFunctionalUnit(fu_id++, INST_INT_DIV, int_div_cycles));
+        fu_int_div.push_back(new VanadisFunctionalUnit(fu_id++, INST_INT_DIV, int_div_cycles, params.find<bool>("dividers_block", false)));
     }
 
     const uint16_t branch_units  = params.find<uint16_t>("branch_units", 1);
@@ -350,7 +359,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
         fp_div_cycles);
 
     for ( uint16_t i = 0; i < fp_div_units; ++i ) {
-        fu_fp_div.push_back(new VanadisFunctionalUnit(fu_id++, INST_FP_DIV, fp_div_cycles));
+        fu_fp_div.push_back(new VanadisFunctionalUnit(fu_id++, INST_FP_DIV, fp_div_cycles, params.find<bool>("dividers_block", false)));
     }
 
     //////////////////////////////////////////////////////////////////////////////////////
@@ -398,6 +407,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     stat_loads_issued         = registerStatistic<uint64_t>("loads_issued", "1");
     stat_stores_issued        = registerStatistic<uint64_t>("stores_issued", "1");
     stat_branch_mispredicts   = registerStatistic<uint64_t>("branch_mispredicts", "1");
+    stat_order_violations     = registerStatistic<uint64_t>("memory_order_violations", "1");
     stat_branches             = registerStatistic<uint64_t>("branches", "1");
     stat_cycles               = registerStatistic<uint64_t>("cycles", "1");
     stat_rob_entries          = registerStatistic<uint64_t>("rob_slots_in_use", "1");
@@ -523,6 +533,11 @@ VanadisCore::performRename(const uint32_t hw_thr)
             }
         }
 
+        const auto ins_type = ins->getInstFuncType();
+        if ( INST_LOAD == ins_type || INST_STORE == ins_type || INST_FENCE == ins_type ) {
+            ins->setMemorySequence(next_memory_sequence[hw_thr]++);
+        }
+
         assignRegistersToInstruction(
             thread_decoders[hw_thr]->countISAIntReg(), thread_decoders[hw_thr]->countISAFPReg(), ins, int_register_stack,
             fp_register_stack, issue_isa_tables[hw_thr]);
@@ -544,6 +559,35 @@ VanadisCore::inputValuesReady(const VanadisInstruction* ins, const bool include_
         if ( nullptr != producer && ! producer->completedExecution() ) return false;
     }
     return true;
+}
+
+bool
+VanadisCore::loadWaitsForStores(const VanadisInstruction* load) const
+{
+    return load_waits_for_stores[(load->getInstructionAddress() >> 2) & (LOAD_WAIT_TABLE_ENTRIES - 1)] != 0;
+}
+
+void
+VanadisCore::onStoreAddressKnown(const VanadisInstruction* store, const uint64_t address, const uint64_t width)
+{
+    const uint32_t thr = store->getHWThread();
+    VanadisCircularQueue<VanadisInstruction*>* thr_rob = rob[thr];
+    for ( size_t i = 0; i < thr_rob->size(); ++i ) {
+        VanadisInstruction* ins = thr_rob->peekAt(i);
+        if ( INST_LOAD != ins->getInstFuncType() || ins->getMemorySequence() <= store->getMemorySequence() ) continue;
+        const VanadisLoadInstruction* load = dynamic_cast<VanadisLoadInstruction*>(ins);
+        const uint64_t read = load->getAccessWidth();
+        if ( 0 == read || load->getAccessAddress() >= address + width || address >= load->getAccessAddress() + read ) continue;
+        // The oldest such load: everything after it is fetched again. A load another store has already caught may be older.
+        if ( ! has_order_violation[thr] || load->getMemorySequence() < violating_load_sequence[thr] ) {
+            has_order_violation[thr] = 1;
+            violating_load_address[thr] = load->getInstructionAddress();
+            violating_load_sequence[thr] = load->getMemorySequence();
+        }
+        load_waits_for_stores[(load->getInstructionAddress() >> 2) & (LOAD_WAIT_TABLE_ENTRIES - 1)] = 1;
+        stat_order_violations->addData(1);
+        return;
+    }
 }
 
 void
@@ -578,9 +622,24 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
             continue;
         }
 
+        // A plain load may pass older loads, and older stores whose addresses are unknown unless it has been caught reading
+        // too early. Every other memory operation waits until all older ones have issued, so the first-in, first-out queue
+        // of the LSQ never holds an operation behind a younger one that depends on it.
+        const bool plain_load = INST_LOAD == ins_type
+            && MEM_TRANSACTION_NONE == dynamic_cast<VanadisLoadInstruction*>(ins)->getTransactionType();
+        const bool plain_store = INST_STORE == ins_type
+            && MEM_TRANSACTION_NONE == dynamic_cast<VanadisStoreInstruction*>(ins)->getTransactionType();
         const bool memory_op = INST_LOAD == ins_type || INST_STORE == ins_type || INST_FENCE == ins_type;
-        const bool can_issue = ( INST_SYSCALL == ins_type || inputValuesReady(ins, false) )
-            && ! ( memory_op && unallocated_memory_op_seen )
+        bool order_allows = true;
+        if ( plain_load ) {
+            order_allows = ! ( unallocated_memory_op_seen & UNISSUED_ORDERED )
+                && ! ( ( unallocated_memory_op_seen & UNISSUED_STORE ) && loadWaitsForStores(ins) );
+        }
+        else if ( memory_op ) {
+            order_allows = 0 == unallocated_memory_op_seen;
+        }
+
+        const bool can_issue = ( INST_SYSCALL == ins_type || inputValuesReady(ins, false) ) && order_allows
             && ! ( ins->isSerializing() && 0 != j );
 
         if ( can_issue && 0 == allocateFunctionalUnit(ins) ) {
@@ -590,8 +649,9 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
             return 0;
         }
 
-        // Memory operations enter the load/store queue in program order.
-        if ( memory_op ) unallocated_memory_op_seen = true;
+        if ( plain_load ) unallocated_memory_op_seen |= UNISSUED_LOAD;
+        else if ( plain_store ) unallocated_memory_op_seen |= UNISSUED_STORE;
+        else if ( memory_op ) unallocated_memory_op_seen |= UNISSUED_ORDERED;
         if ( blocks_younger ) return 1;
     }
 
@@ -951,6 +1011,17 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
     // mis-predict
     if ( rob->empty() ) { return 1; }
 
+    // A load read before an older store knew its address: fetch its instruction again from its first micro-op, so that a
+    // micro-op of the instruction that has retired does not run twice. An older copy of the same instruction also qualifies.
+    if ( UNLIKELY(has_order_violation[rob_num]) ) {
+        VanadisInstruction* head = rob->peek();
+        const uint64_t head_address = head->getInstructionAddress();
+        if ( head_address == violating_load_address[rob_num] && head_address != last_retired_address[rob_num] ) {
+            handleMisspeculate(rob_num, head_address);
+            return 1;
+        }
+    }
+
     VanadisInstruction* rob_front              = rob->peek();
     bool                perform_pipeline_clear = false;
     const uint32_t      ins_thread             = rob->peekAt(0)->getHWThread();
@@ -1106,6 +1177,7 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
         // can be cleared from the ROB
         if ( perform_cleanup )
         {
+            if ( rename_at_dispatch ) last_retired_address[rob_num] = rob->peek()->getInstructionAddress();
             rob->pop();
             if ( rename_at_dispatch ) renamed_in_rob[rob_num]--;
 
@@ -1619,6 +1691,7 @@ VanadisCore::tick(SST::Cycle_t cycle)
     }
 
     if ( rename_at_dispatch ) {
+        if ( 0 == cycle % LOAD_WAIT_CLEAR_CYCLES ) std::fill(load_waits_for_stores.begin(), load_waits_for_stores.end(), 0);
         for ( uint32_t thr = 0; thr < hw_threads; ++thr ) {
             performRename(thr);
         }
@@ -2262,6 +2335,8 @@ VanadisCore::handleMisspeculate(const uint32_t hw_thr, const uint64_t new_ip)
     // Reset the ISA table to get correct ISA to physical mappings
     issue_isa_tables[hw_thr]->reset(retire_isa_tables[hw_thr]);
     thread_decoders[hw_thr]->getBranchPredictor()->flush();
+    has_order_violation[hw_thr] = 0;
+    last_retired_address[hw_thr] = 0;
     thread_decoders[hw_thr]->setInstructionPointerAfterMisspeculate(new_ip);
 
     #ifdef VANADIS_BUILD_DEBUG

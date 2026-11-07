@@ -73,6 +73,12 @@ public:
     // Called once when the last request of the load has answered, or when computeLoadAddress asked for no access.
     virtual void finishLoad(VanadisRegisterFile* regFile) {}
 
+    // The bytes this load read from memory or from a store: used to find a load that read before an older store knew its
+    // address. A width of zero means it has not read yet.
+    void     setAccessRange(const uint64_t address, const uint64_t width) { access_address = address; access_width = width; }
+    uint64_t getAccessAddress() const { return access_address; }
+    uint64_t getAccessWidth() const { return access_width; }
+
     virtual bool                      isPartialLoad() const { return false; }
     // A load of one register may take all its bytes from an older store.
     virtual bool                      takesForwardedStoreData() const { return MEM_TRANSACTION_NONE == memAccessType && ! isPartialLoad(); }
@@ -210,6 +216,8 @@ public:
     virtual uint16_t getRegisterOffset() const { return 0; }
 
 protected:
+    uint64_t access_address = 0;
+    uint64_t access_width = 0;
     const bool               signed_extend;
     VanadisMemoryTransaction memAccessType;
     const int64_t            offset;

@@ -51,8 +51,8 @@ private:
 class VanadisFunctionalUnit {
 
 public:
-    VanadisFunctionalUnit(uint16_t id, VanadisFunctionalUnitType unit_type, uint16_t lat)
-        : fu_id(id), fu_type(unit_type), latency(lat), accept_this_cycle(true) {
+    VanadisFunctionalUnit(uint16_t id, VanadisFunctionalUnitType unit_type, uint16_t lat, bool blocks_while_busy = false)
+        : fu_id(id), fu_type(unit_type), latency(lat), accept_this_cycle(true), blocking(blocks_while_busy) {
     }
 
     ~VanadisFunctionalUnit() {
@@ -63,7 +63,7 @@ public:
 
     VanadisFunctionalUnitType getType() const { return fu_type; }
 
-    bool isInstructionSlotFree() const { return accept_this_cycle; }
+    bool isInstructionSlotFree() const { return accept_this_cycle && ! (blocking && ! pending_execute.empty()); }
 
     void insertInstruction(VanadisInstruction* ins) {
         //assert(accept_this_cycle == true);
@@ -140,6 +140,8 @@ private:
     VanadisFunctionalUnitType fu_type;
     const uint16_t fu_id;
     bool accept_this_cycle;
+    // The unit takes no new instruction until the current one has executed, as a divider does.
+    bool blocking;
 };
 
 } // namespace Vanadis

@@ -89,6 +89,9 @@ public:
     // The check that the data register of a store holds its value; without one every store's data is in place.
     void setStoreDataReadyCheck(std::function<bool(const VanadisInstruction*)> check) { store_data_ready_ = std::move(check); }
 
+    // Told the address of each store when it becomes known.
+    void setStoreAddressListener(std::function<void(const VanadisInstruction*, uint64_t, uint64_t)> listener) { store_address_listener_ = std::move(listener); }
+
     void setCoreId( int core ) { core_id_ = core; }
     int getCoreId( ) { return core_id_; }
 
@@ -174,6 +177,7 @@ protected:
     uint32_t hw_threads_;
     std::vector<VanadisRegisterFile*>* register_files_;
     std::function<bool(const VanadisInstruction*)> store_data_ready_;
+    std::function<void(const VanadisInstruction*, uint64_t, uint64_t)> store_address_listener_;
     SST::Output* output_;
 };
 

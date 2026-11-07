@@ -306,9 +306,17 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             if ( size == 0 || k == 5 ) return false;
             return unary_like("FRINT.Z", predFpUnary, size, k, 0);
         }
-        if ( k == 0x0C || k == 0x0D ) {
+        if ( k == 0x0C ) {
             if ( size == 0 ) return false;
-            return unary_like("FUN.Z", predFpUnary, size, k == 0x0C ? 8 : 9, 0);
+            return unary_like("FUN.Z", predFpUnary, size, 8, 0);
+        }
+        if ( k == 0x0D ) {
+            if ( size == 0 ) return false;
+            auto* i = op(bundle, addr, "FSQRT.Z", INST_FP_DIV, predFpUnary, { fpcr }, {}, { pg, rd, rn }, { rd });
+            i->a = size;
+            i->c = 9;
+            i->d = 0;
+            return true;
         }
         if ( (ins & 0xFFF8E000) == 0x6510A000 ) {
             // FRINT32Z, FRINT32X, FRINT64Z, FRINT64X: bit 18 = 64, bit 17 = D, bit 16 = X
