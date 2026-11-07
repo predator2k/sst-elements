@@ -24,6 +24,7 @@
 #include "lsq/vlsq.h"
 #include "os/vcpuos.h"
 #include "vbranch/vbranchbasic.h"
+#include "vbranch/vbranchtage.h"
 #include "vbranch/vbranchunit.h"
 #include "velf/velfinfo.h"
 #include "vinsloader.h"

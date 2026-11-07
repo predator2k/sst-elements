@@ -220,6 +220,16 @@ public:
     }
 
     VanadisArm64Branch* clone() override { return new VanadisArm64Branch(*this); }
+
+    VanadisBranchClass getBranchClass() const override
+    {
+        if ( VanadisArm64BranchKind::DIRECT == kind || VanadisArm64BranchKind::REG == kind ) {
+            if ( count_isa_int_reg_out > 0 ) return VanadisBranchClass::CALL;
+            return 0 == strcmp(name, "RET") ? VanadisBranchClass::RETURN : VanadisBranchClass::OTHER;
+        }
+        return VanadisBranchClass::CONDITIONAL;
+    }
+
     const char*         getInstCode() const override { return name; }
 
     void printToBuffer(char* buffer, size_t buffer_size) override

@@ -40,6 +40,15 @@ public:
     virtual void push(const uint64_t ins_addr, const uint64_t pred_addr) = 0;
     virtual uint64_t predictAddress(const uint64_t addr) = 0;
     virtual bool contains(const uint64_t addr) = 0;
+
+    // The next instruction address after the branch at addr. The default takes the address last seen at retire.
+    virtual uint64_t predictNext(const uint64_t addr, const uint64_t fall_through, const VanadisBranchClass branch_class)
+    {
+        return contains(addr) ? predictAddress(addr) : fall_through;
+    }
+
+    // Every instruction in flight was squashed: the speculative state returns to the retired state.
+    virtual void flush() {}
 };
 
 } // namespace Vanadis

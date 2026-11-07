@@ -313,6 +313,7 @@ vanadis.h \
 vanadisDbgFlags.h \
 vbranch/vbranchbasic.h \
 vbranch/vbranchunit.h \
+vbranch/vbranchtage.h \
 velf/velfinfo.h \
 vfpflags.h \
 vfuncunit.h \

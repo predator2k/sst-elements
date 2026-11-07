@@ -24,6 +24,9 @@
 namespace SST {
 namespace Vanadis {
 
+// What a decoder knows about a branch when it predicts it.
+enum class VanadisBranchClass { OTHER, CONDITIONAL, CALL, RETURN };
+
 class VanadisSpeculatedInstruction : public virtual VanadisInstruction
 {
 
@@ -51,6 +54,7 @@ public:
     virtual uint64_t getSpeculatedAddress() const { return speculatedAddress; }
     virtual void     setSpeculatedAddress(const uint64_t spec_ad) { speculatedAddress = spec_ad; }
     virtual uint64_t getTakenAddress() const { return takenAddress; }
+    virtual VanadisBranchClass getBranchClass() const { return VanadisBranchClass::OTHER; }
     void setTakenAddress(uint64_t addr) { takenAddress = addr; }
     virtual bool     isSpeculated() const { return true; }
 

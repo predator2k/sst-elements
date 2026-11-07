@@ -2261,6 +2261,7 @@ VanadisCore::handleMisspeculate(const uint32_t hw_thr, const uint64_t new_ip)
 
     // Reset the ISA table to get correct ISA to physical mappings
     issue_isa_tables[hw_thr]->reset(retire_isa_tables[hw_thr]);
+    thread_decoders[hw_thr]->getBranchPredictor()->flush();
     thread_decoders[hw_thr]->setInstructionPointerAfterMisspeculate(new_ip);
 
     #ifdef VANADIS_BUILD_DEBUG

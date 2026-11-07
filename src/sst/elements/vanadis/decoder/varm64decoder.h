@@ -141,17 +141,11 @@ public:
                         if ( next_ins->getInstFuncType() == INST_BRANCH ) {
                             VanadisSpeculatedInstruction* next_spec_ins =
                                 dynamic_cast<VanadisSpeculatedInstruction*>(next_ins);
-                            if ( branch_predictor->contains(ip) ) {
-                                const uint64_t predicted_address = branch_predictor->predictAddress(ip);
-                                next_spec_ins->setSpeculatedAddress(predicted_address);
-                                ip                = predicted_address;
-                                bundle_has_branch = true;
-                            }
-                            else {
-                                ip += bundle->pcIncrement();
-                                next_spec_ins->setSpeculatedAddress(ip);
-                                bundle_has_branch = true;
-                            }
+                            const uint64_t predicted_address =
+                                branch_predictor->predictNext(ip, ip + bundle->pcIncrement(), next_spec_ins->getBranchClass());
+                            next_spec_ins->setSpeculatedAddress(predicted_address);
+                            ip                = predicted_address;
+                            bundle_has_branch = true;
                         }
                         thread_rob->push(next_ins->clone());
                     }
