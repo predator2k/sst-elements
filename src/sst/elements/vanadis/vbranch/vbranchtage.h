@@ -35,7 +35,7 @@ public:
         { "branch_entries", "Entries of the table of last targets", "4096" },
         { "bimodal_entries", "Entries of the bimodal table, a power of two", "16384" },
         { "tagged_entries", "Entries of each tagged table, a power of two", "4096" },
-        { "history_lengths", "Global history length of each tagged table, shortest first, up to 256 branches", "[4, 8, 16, 32, 64, 128, 256]" },
+        { "history_lengths", "Global history length of each tagged table, shortest first, up to 2048 branches and 16 tables", "[4, 8, 16, 32, 64, 128, 256]" },
         { "return_stack_entries", "Entries of the return address stack", "32" })
 
     SST_ELI_DOCUMENT_STATISTICS(
@@ -56,6 +56,7 @@ public:
         if ( ! powerOfTwo(bimodal) || ! powerOfTwo(tagged) ) {
             output_->fatal(CALL_INFO, -1, "bimodal_entries and tagged_entries must be powers of two\n");
         }
+        if ( lengths.size() > MAX_TABLES ) output_->fatal(CALL_INFO, -1, "at most %u tagged tables\n", MAX_TABLES);
         for ( const uint32_t length : lengths ) {
             if ( length == 0 || length > HISTORY_BITS ) {
                 output_->fatal(CALL_INFO, -1, "a history length must be in 1 to %u\n", HISTORY_BITS);
@@ -175,7 +176,9 @@ public:
 
 private:
     //! Bits of global history kept, the largest allowed history length.
-    static constexpr uint32_t HISTORY_BITS = 256;
+    static constexpr uint32_t HISTORY_BITS = 2048;
+    //! Tagged tables at most.
+    static constexpr uint32_t MAX_TABLES = 16;
     static constexpr uint32_t HISTORY_WORD_BITS = 64;
     using History = std::array<uint64_t, HISTORY_BITS / HISTORY_WORD_BITS>;
 
@@ -216,6 +219,9 @@ private:
         int alternate;
         bool prediction;
         bool alternate_prediction;
+        //! The index and tag of the branch in each tagged table, computed once at prediction.
+        std::array<uint32_t, MAX_TABLES> index;
+        std::array<uint16_t, MAX_TABLES> tag;
     };
 
     //! Another predicted branch: retire moves the return address stack forward.
@@ -282,10 +288,14 @@ private:
 
     uint64_t predictConditional(const uint64_t addr, const uint64_t fall_through)
     {
-        InFlight branch{ addr, fall_through, history_, NO_TABLE, NO_TABLE, false, false };
+        InFlight branch{ addr, fall_through, history_, NO_TABLE, NO_TABLE, false, false, {}, {} };
+        for ( size_t t = 0; t < tables_.size(); ++t ) {
+            branch.index[t] = tableIndex(addr, history_, t);
+            branch.tag[t] = tableTag(addr, history_, t);
+        }
         for ( int t = static_cast<int>(tables_.size()) - 1; t >= 0; --t ) {
-            const TaggedEntry& entry = tables_[t].entries[tableIndex(addr, history_, t)];
-            if ( entry.tag != tableTag(addr, history_, t) ) continue;
+            const TaggedEntry& entry = tables_[t].entries[branch.index[t]];
+            if ( entry.tag != branch.tag[t] ) continue;
             if ( NO_TABLE == branch.provider ) branch.provider = t;
             else if ( NO_TABLE == branch.alternate ) { branch.alternate = t; break; }
         }
@@ -295,9 +305,9 @@ private:
             branch.alternate_prediction = base;
         }
         else {
-            const TaggedEntry& provider = tables_[branch.provider].entries[tableIndex(addr, history_, branch.provider)];
+            const TaggedEntry& provider = tables_[branch.provider].entries[branch.index[branch.provider]];
             branch.alternate_prediction = NO_TABLE == branch.alternate
-                ? base : tables_[branch.alternate].entries[tableIndex(addr, history_, branch.alternate)].counter >= 0;
+                ? base : tables_[branch.alternate].entries[branch.index[branch.alternate]].counter >= 0;
             // A new entry says little yet, so the next table decides.
             const bool newly_allocated = (provider.counter == 0 || provider.counter == -1) && provider.useful == 0;
             branch.prediction = newly_allocated ? branch.alternate_prediction : provider.counter >= 0;
@@ -314,12 +324,11 @@ private:
     {
         if ( branch.prediction != taken ) stat_mispredictions_->addData(1);
 
-        const History& history = branch.history;
         if ( NO_TABLE == branch.provider ) {
             step(bimodal_[bimodalIndex(branch.address)], taken, BIMODAL_MIN, BIMODAL_MAX);
         }
         else {
-            TaggedEntry& provider = tables_[branch.provider].entries[tableIndex(branch.address, history, branch.provider)];
+            TaggedEntry& provider = tables_[branch.provider].entries[branch.index[branch.provider]];
             const bool provider_prediction = provider.counter >= 0;
             step(provider.counter, taken, COUNTER_MIN, COUNTER_MAX);
             if ( provider_prediction != branch.alternate_prediction ) {
@@ -348,9 +357,9 @@ private:
     {
         bool allocated = false;
         for ( size_t t = static_cast<size_t>(branch.provider + 1); t < tables_.size(); ++t ) {
-            TaggedEntry& entry = tables_[t].entries[tableIndex(branch.address, branch.history, t)];
+            TaggedEntry& entry = tables_[t].entries[branch.index[t]];
             if ( entry.useful == 0 ) {
-                entry.tag = tableTag(branch.address, branch.history, t);
+                entry.tag = branch.tag[t];
                 entry.counter = taken ? 0 : -1;
                 allocated = true;
                 break;
@@ -358,7 +367,7 @@ private:
         }
         if ( allocated ) return;
         for ( size_t t = static_cast<size_t>(branch.provider + 1); t < tables_.size(); ++t ) {
-            TaggedEntry& entry = tables_[t].entries[tableIndex(branch.address, branch.history, t)];
+            TaggedEntry& entry = tables_[t].entries[branch.index[t]];
             if ( entry.useful > 0 ) --entry.useful;
         }
     }
