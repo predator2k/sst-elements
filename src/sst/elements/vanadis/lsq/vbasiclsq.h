@@ -434,7 +434,9 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         /*
          * Whether a load may reach memory in this cycle under load_new_lines_per_cycle, and if so records its lines.
          * Handling: a line among the load_line_window most recent load lines takes no slot; the other lines take one
-         * new-line slot each. The first load with new lines in a cycle always goes. Emits nothing.
+         * new-line slot each. The first load with new lines in a cycle always goes. Loads are tried oldest first, so once
+         * a load waits for a slot every later load of the cycle waits too, and a younger load cannot reach a line before
+         * an older one. A load that waits sets load_line_blocked_. Emits nothing.
          */
         bool takeLoadLines(uint64_t address, uint64_t width)
         {
@@ -443,6 +445,10 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 load_lines_cycle_ = current_cycle_;
                 new_load_lines_this_cycle_ = 0;
             }
+            if (load_lines_blocked_cycle_ == current_cycle_) {
+                load_line_blocked_ = true;
+                return false;
+            }
             if (width == 0) width = 1;
             const uint64_t first = address / cache_line_width_;
             const uint64_t last = (address + width - 1) / cache_line_width_;
@@ -450,7 +456,11 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             for (uint64_t line = first; line <= last; ++line) {
                 if (std::find(recent_load_lines_.begin(), recent_load_lines_.end(), line) == recent_load_lines_.end()) fresh++;
             }
-            if (fresh > 0 && new_load_lines_this_cycle_ > 0 && new_load_lines_this_cycle_ + fresh > load_new_lines_per_cycle_) return false;
+            if (fresh > 0 && new_load_lines_this_cycle_ > 0 && new_load_lines_this_cycle_ + fresh > load_new_lines_per_cycle_) {
+                load_lines_blocked_cycle_ = current_cycle_;
+                load_line_blocked_ = true;
+                return false;
+            }
             new_load_lines_this_cycle_ += fresh;
             for (uint64_t line = first; line <= last; ++line) {
                 auto found = std::find(recent_load_lines_.begin(), recent_load_lines_.end(), line);
@@ -1317,6 +1327,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             output_->verbose(CALL_INFO, 16, VANADIS_DBG_LSQ_LOAD_FLG, " (ScalarLSQ) -> load ins: 0x%" PRI_ADDR " / thr: %" PRIu32 "\n",
             load_ins->getInstructionAddress(), load_ins->getHWThread());
             #endif
+            load_line_blocked_ = false;
             bool result = load_process(load_ins->getHWThread(),load_ins,
                     load_addresses, load_widths);
 
@@ -1419,6 +1430,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                     if(loads_pending_.size() + parked_loads_.size() >= max_loads_) return false;
 
                     bool result = sendLoadReq(load_ins);
+                    // A load that waits for a new-line slot stays at the front for a later cycle.
+                    if(! result && load_line_blocked_) return false;
 
                     // With rename_at_dispatch a load that must wait for a store steps aside and later operations continue.
                     // An older load may be behind it in the queue, so waiting at the front could never end.
@@ -1844,6 +1857,9 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         std::deque<uint64_t> recent_load_lines_;
         uint32_t new_load_lines_this_cycle_ = 0;
         uint64_t load_lines_cycle_ = UINT64_MAX;
+        // The cycle in which a load last waited for a new-line slot, and whether the last load tried waited for one.
+        uint64_t load_lines_blocked_cycle_ = UINT64_MAX;
+        bool load_line_blocked_ = false;
         // store_lines_per_cycle and the lines the stores of this cycle write.
         const uint32_t store_lines_per_cycle_;
         std::vector<uint64_t> store_lines_this_cycle_;
