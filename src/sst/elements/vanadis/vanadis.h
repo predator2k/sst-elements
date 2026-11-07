@@ -123,6 +123,7 @@ public:
         { "hardware_threads", "Number of hardware threads in this core", "1" },
         { "clock", "Core clock frequency", "1GHz" },
         { "reorder_slots", "Number of slots in the reorder buffer", "64"},
+        { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },
         { "physical_fp_registers", "Number of physical floating point registers per hardware thread", "128" },
         { "integer_arith_units", "Number of integer arithemetic units", "2" },
@@ -235,6 +236,15 @@ private:
 
     void performFetch(const uint64_t cycle);
     void performDecode(const uint64_t cycle);
+
+    // rename_at_dispatch: rename the instructions that entered the reorder buffer, oldest first, up to decodes_per_cycle.
+    void performRename(const uint32_t hw_thr);
+    // rename_at_dispatch: issue the oldest renamed instruction that can issue. Returns 0 if one issued, otherwise 1.
+    int performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t& rob_start, int& unallocated_memory_op_seen);
+    // rename_at_dispatch: every input the instruction reads at issue has its value; include_store_data adds store data.
+    bool inputValuesReady(const VanadisInstruction* ins, const bool include_store_data) const;
+    // rename_at_dispatch: the instruction no longer produces its output registers (it retired or was squashed).
+    void clearRegisterProducers(const VanadisInstruction* ins);
     int  performIssue(const uint64_t cycle, int hwThr, uint32_t& rob_start, int& unallocated_memory_op_seen);
     void performExecute(const uint64_t cycle);
     int  performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*>* rob, const uint64_t cycle);
@@ -293,6 +303,13 @@ private:
     std::vector<VanadisFunctionalUnit*> fu_fp_div;
 
     std::vector<VanadisRegisterFile*>  register_files;
+    // rename_at_dispatch: the instruction in the reorder buffer that writes each physical register, nullptr when the
+    // value is in place; and the number of entries at the front of each reorder buffer that are renamed.
+    bool rename_at_dispatch = false;
+    std::vector<VanadisInstruction*> int_phys_reg_producer;
+    std::vector<VanadisInstruction*> fp_phys_reg_producer;
+    std::vector<size_t> renamed_in_rob;
+
     VanadisRegisterStack* int_register_stack = nullptr;
     VanadisRegisterStack* fp_register_stack = nullptr;
 

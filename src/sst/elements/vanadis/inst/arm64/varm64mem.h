@@ -83,6 +83,9 @@ public:
     }
 
     uint16_t getRegisterOffset() const override { return reg_offset; }
+
+    // A vector load merges elements and has fault rules of its own.
+    bool takesForwardedStoreData() const override { return false; }
     bool     suppressesFault() const override { return suppress; }
     void     noteSuppressedFault(uint64_t vaddr) override
     {
@@ -144,6 +147,9 @@ public:
     }
 
     uint16_t getRegisterOffset() const override { return reg_offset; }
+
+    // The element and predicate registers decide the addresses, so every input must be ready at issue.
+    bool storeDataReadAtMemory() const override { return false; }
 
     uint64_t phys_x(VanadisRegisterFile* rf, uint16_t pos) const { return rf->getIntReg<uint64_t>(phys_int_regs_in[pos]); }
     const uint8_t* phys_v(VanadisRegisterFile* rf, uint16_t pos) const { return rf->fpRegBytes(phys_fp_regs_in[pos]); }

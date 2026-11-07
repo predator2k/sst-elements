@@ -16,6 +16,7 @@
 #ifndef _H_VANADIS_LSQ_BASE
 #define _H_VANADIS_LSQ_BASE
 
+#include <functional>
 #include <sst/core/output.h>
 #include <sst/core/subcomponent.h>
 
@@ -85,6 +86,9 @@ public:
 
         register_files_ = reg_f;
     }
+    // The check that the data register of a store holds its value; without one every store's data is in place.
+    void setStoreDataReadyCheck(std::function<bool(const VanadisInstruction*)> check) { store_data_ready_ = std::move(check); }
+
     void setCoreId( int core ) { core_id_ = core; }
     int getCoreId( ) { return core_id_; }
 
@@ -167,6 +171,7 @@ protected:
     uint32_t core_id_;
     uint32_t hw_threads_;
     std::vector<VanadisRegisterFile*>* register_files_;
+    std::function<bool(const VanadisInstruction*)> store_data_ready_;
     SST::Output* output_;
 };
 

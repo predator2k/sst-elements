@@ -57,6 +57,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 { "max_stores", "Set the maximum number of stores permitted in the queue", "8" },
                 { "max_loads", "Set the maximum number of loads permitted in the queue", "16" },
                 { "issues_per_cycle", "Maximum number of issues the LSQ can attempt per cycle.", "2"},
+        { "store_forward_cycles", "Cycles from the issue of a load to its data when an older store holds all of its bytes. 0 makes the load wait until the store has gone to memory.", "0"},
                 #ifdef VANADIS_BUILD_DEBUG
                 { "address_mask", "Can mask off address bits if needed during construction of a operation for debug", "0xFFFFFFFFFFFFFFFF"}
                 #endif
@@ -65,6 +66,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         SST_ELI_DOCUMENT_STATISTICS({ "bytes_read", "Count all the bytes read for data operations", "bytes", 1 },
                                     { "bytes_stored", "Count all the bytes written for data operations", "bytes", 1 },
                                     { "loads_issued", "Count the number of loads issued", "operations", 1 },
+                                    { "loads_forwarded", "Count the number of loads that took their bytes from an older store", "operations", 1 },
                                     { "stores_issued", "Count the number of stores issued", "operations", 1 },
                                     { "fences_issued", "Count the number of fences issued", "operations", 1},
                                     { "loads_executed", "Count the number of loads issued", "operations", 1 },
@@ -81,7 +83,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         VanadisBasicLoadStoreQueue(ComponentId_t id, Params& params, int coreid, int hwthreads) : VanadisLoadStoreQueue(id, params, coreid, hwthreads),
             max_stores_(params.find<size_t>("max_stores", 8)),
             max_loads_(params.find<size_t>("max_loads", 16)),
-            max_issue_attempts_per_cycle_(params.find("issues_per_cycle", 2))
+            max_issue_attempts_per_cycle_(params.find("issues_per_cycle", 2)),
+            store_forward_cycles_(params.find<uint64_t>("store_forward_cycles", 0))
         {
             std_mem_handlers_ = new VanadisBasicLoadStoreQueue::StandardMemHandlers(this, output_);
 
@@ -102,6 +105,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             stores_pending_size_ = 0;
 
             stat_loads_issued_ = registerStatistic<uint64_t>("loads_issued", "1");
+            stat_loads_forwarded_ = registerStatistic<uint64_t>("loads_forwarded", "1");
             stat_stores_issued_ = registerStatistic<uint64_t>("stores_issued", "1");
             stat_fences_issued_ = registerStatistic<uint64_t>("fences_issued", "1");
 
@@ -180,6 +184,15 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 }
             }
 
+            for(auto forwarded_itr = forwarded_loads_.begin(); forwarded_itr != forwarded_loads_.end(); ) {
+                if( forwarded_itr->thread == thread ) {
+                    delete forwarded_itr->response;
+                    forwarded_itr = forwarded_loads_.erase(forwarded_itr);
+                } else {
+                    ++forwarded_itr;
+                }
+            }
+
             stores_pending_size_ -= stores_pending_[thread].size();
             for(auto store_itr = stores_pending_[thread].begin(); store_itr != stores_pending_[thread].end(); ) {
                 delete (*store_itr);
@@ -252,6 +265,13 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             stat_loads_pending_->addData(loads_pending_.size());
             stat_stores_pending_->addData(std_stores_in_flight_.size());
             stat_store_buffer_entries_->addData(stores_pending_size_);
+
+            current_cycle_ = cycle;
+            while( ! forwarded_loads_.empty() && forwarded_loads_.front().ready_cycle <= cycle ) {
+                StandardMem::ReadResp* response = forwarded_loads_.front().response;
+                forwarded_loads_.pop_front();
+                std_mem_handlers_->handle(response);
+            }
 
             // this can be called multiple times per cycle
             for(uint32_t attempt = 0; attempt < max_issue_attempts_per_cycle_; ++attempt) {
@@ -1360,6 +1380,10 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 // we have pending, if yes, wait for conflict to clear and then we can proceed
                 if(UNLIKELY(checkStoreConflict(load_ins->getHWThread(), load_address, load_width)))
                 {
+                    if(store_forward_cycles_ > 0 && forwardStoreToLoad(load_ins, load_address, load_width)) {
+                        return true;
+                    }
+
                     #ifdef VANADIS_BUILD_DEBUG
                     if(output_->getVerboseLevel() >= 16)
                     {
@@ -1514,6 +1538,46 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             return match_id;
         }
 
+        // The youngest overlapping older store gives the load its bytes when it holds all of them and has its data. Returns
+        // true when the load was answered this way; otherwise the load waits for the store as it does without forwarding.
+        bool forwardStoreToLoad(VanadisLoadInstruction* load_ins, const uint64_t address, const uint64_t width)
+        {
+            if(! load_ins->takesForwardedStoreData()) return false;
+
+            const uint32_t thread = load_ins->getHWThread();
+            for(auto store_itr = stores_pending_[thread].rbegin(); store_itr != stores_pending_[thread].rend(); ++store_itr) {
+                VanadisBasicStorePendingEntry* store_entry = *store_itr;
+                if(! store_entry->storeAddressOverlaps(address, width)) continue;
+
+                VanadisStoreInstruction* store_ins = store_entry->getStoreInstruction();
+                const uint64_t store_address = store_entry->getStoreAddress();
+                const bool covers = store_address <= address && address + width <= store_address + store_entry->getStoreWidth();
+                if(! covers || ! store_ins->storeDataReadAtMemory()) return false;
+                if(store_data_ready_ && ! store_data_ready_(store_ins)) return false;
+
+                uint16_t target_thread;
+                uint16_t target_reg;
+                getStoreTarget(store_entry, store_ins, &target_thread, &target_reg);
+                std::vector<uint8_t> payload(width);
+                register_files_->at(target_thread)->copyFromRegister(
+                    target_reg, store_ins->getRegisterOffset() + (address - store_address), &payload[0], width,
+                    store_ins->getValueRegisterType() == STORE_FP_REGISTER);
+
+                StandardMem::Read read(address, width, 0, address, load_ins->getInstructionAddress(), thread);
+                StandardMem::ReadResp* response = static_cast<StandardMem::ReadResp*>(read.makeResponse());
+                response->data = payload;
+
+                VanadisBasicLoadPendingEntry* load_entry = new VanadisBasicLoadPendingEntry(load_ins, address, width);
+                load_entry->addRequest(response->getID());
+                loads_pending_.push_back(load_entry);
+
+                forwarded_loads_.push_back({ current_cycle_ + store_forward_cycles_, thread, response });
+                stat_loads_forwarded_->addData(1);
+                return true;
+            }
+            return false;
+        }
+
         bool checkStoreConflict(const uint32_t thread, const uint64_t address, const uint64_t width)
         {
             bool conflicts = false;
@@ -1548,11 +1612,23 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         const size_t max_stores_;
         const size_t max_loads_;
         const uint32_t max_issue_attempts_per_cycle_;
+        const uint64_t store_forward_cycles_;
+
+        // A load that took its bytes from a store: its response, delivered at ready_cycle.
+        struct ForwardedLoad
+        {
+            uint64_t ready_cycle;
+            uint32_t thread;
+            StandardMem::ReadResp* response;
+        };
+        std::deque<ForwardedLoad> forwarded_loads_;
+        uint64_t current_cycle_ = 0;
 
         uint64_t cache_line_width_ = 64;
         uint64_t address_mask_ = 0xFFFFFFFFFFFFFFFFULL; // Only used in VANADIS_BUILD_DEBUG library
 
         Statistic<uint64_t>* stat_store_buffer_entries_;
+        Statistic<uint64_t>* stat_loads_forwarded_;
         Statistic<uint64_t>* stat_op_q_size_;
         Statistic<uint64_t>* stat_stores_pending_;
         Statistic<uint64_t>* stat_loads_pending_;

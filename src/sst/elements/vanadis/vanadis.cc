@@ -106,6 +106,11 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     const uint16_t int_reg_count = params.find<uint16_t>("physical_integer_registers", 128);
     const uint16_t fp_reg_count  = params.find<uint16_t>("physical_fp_registers", 128);
 
+    rename_at_dispatch = params.find<bool>("rename_at_dispatch", false);
+    int_phys_reg_producer.assign(int_reg_count, nullptr);
+    fp_phys_reg_producer.assign(fp_reg_count, nullptr);
+    renamed_in_rob.assign(hw_threads, 0);
+
     output->verbose(
         CALL_INFO, 2, 0,
         "Creating physical register files (quantities are per "
@@ -271,6 +276,9 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     }
 
     lsq->setRegisterFiles(&register_files);
+    if ( rename_at_dispatch ) {
+        lsq->setStoreDataReadyCheck([this](const VanadisInstruction* store) { return inputValuesReady(store, true); });
+    }
 
     //////////////////////////////////////////////////////////////////////////////////////
     SubComponentSlotInfo * lists = getSubComponentSlotInfo("rocc");
@@ -492,6 +500,99 @@ void
 VanadisCore::performFetch(const uint64_t cycle)
 {
     // This is handled by the decoder step, so just keep it empty.
+}
+
+void
+VanadisCore::performRename(const uint32_t hw_thr)
+{
+    if ( halted_masks[hw_thr] ) return;
+
+    VanadisCircularQueue<VanadisInstruction*>* thr_rob = rob[hw_thr];
+    const size_t rob_size = thr_rob->size();
+
+    for ( uint32_t done = 0; done < decodes_per_cycle && renamed_in_rob[hw_thr] < rob_size; ++done ) {
+        VanadisInstruction* ins = thr_rob->peekAt(renamed_in_rob[hw_thr]);
+
+        // A system call takes the current mappings and pops nothing.
+        if ( INST_SYSCALL != ins->getInstFuncType() ) {
+            if ( int_register_stack->unused() < ins->countISAIntRegOut() || fp_register_stack->unused() < ins->countISAFPRegOut() ) {
+                return;
+            }
+        }
+
+        assignRegistersToInstruction(
+            thread_decoders[hw_thr]->countISAIntReg(), thread_decoders[hw_thr]->countISAFPReg(), ins, int_register_stack,
+            fp_register_stack, issue_isa_tables[hw_thr]);
+        renamed_in_rob[hw_thr]++;
+    }
+}
+
+bool
+VanadisCore::inputValuesReady(const VanadisInstruction* ins, const bool include_store_data) const
+{
+    for ( uint16_t i = 0; i < ins->countISAIntRegIn(); ++i ) {
+        if ( ! include_store_data && ins->isStoreDataIntRegIn(i) ) continue;
+        const VanadisInstruction* producer = int_phys_reg_producer[ins->getPhysIntRegIn(i)];
+        if ( nullptr != producer && ! producer->completedExecution() ) return false;
+    }
+    for ( uint16_t i = 0; i < ins->countISAFPRegIn(); ++i ) {
+        if ( ! include_store_data && ins->isStoreDataFPRegIn(i) ) continue;
+        const VanadisInstruction* producer = fp_phys_reg_producer[ins->getPhysFPRegIn(i)];
+        if ( nullptr != producer && ! producer->completedExecution() ) return false;
+    }
+    return true;
+}
+
+void
+VanadisCore::clearRegisterProducers(const VanadisInstruction* ins)
+{
+    for ( uint16_t i = 0; i < ins->countPhysIntRegOut(); ++i ) {
+        const uint16_t reg = ins->getPhysIntRegOut(i);
+        if ( ins == int_phys_reg_producer[reg] ) int_phys_reg_producer[reg] = nullptr;
+    }
+    for ( uint16_t i = 0; i < ins->countPhysFPRegOut(); ++i ) {
+        const uint16_t reg = ins->getPhysFPRegOut(i);
+        if ( ins == fp_phys_reg_producer[reg] ) fp_phys_reg_producer[reg] = nullptr;
+    }
+}
+
+int
+VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t& rob_start, int& unallocated_memory_op_seen)
+{
+    if ( halted_masks[hwThr] ) return 1;
+
+    VanadisCircularQueue<VanadisInstruction*>* thr_rob = rob[hwThr];
+    const size_t limit = renamed_in_rob[hwThr];
+
+    for ( size_t j = rob_start; j < limit; ++j ) {
+        VanadisInstruction* ins = thr_rob->peekAt(j);
+        const auto ins_type = ins->getInstFuncType();
+        // The OS handler reads and writes the registers when a system call retires, so nothing younger issues before that.
+        const bool blocks_younger = INST_SYSCALL == ins_type || ins->isSerializing();
+
+        if ( ins->completedIssue() ) {
+            if ( blocks_younger ) return 1;
+            continue;
+        }
+
+        const bool memory_op = INST_LOAD == ins_type || INST_STORE == ins_type || INST_FENCE == ins_type;
+        const bool can_issue = ( INST_SYSCALL == ins_type || inputValuesReady(ins, false) )
+            && ! ( memory_op && unallocated_memory_op_seen )
+            && ! ( ins->isSerializing() && 0 != j );
+
+        if ( can_issue && 0 == allocateFunctionalUnit(ins) ) {
+            ins->markIssued();
+            ins_issued_this_cycle++;
+            rob_start = j;
+            return 0;
+        }
+
+        // Memory operations enter the load/store queue in program order.
+        if ( memory_op ) unallocated_memory_op_seen = true;
+        if ( blocks_younger ) return 1;
+    }
+
+    return 1;
 }
 
 void
@@ -1003,6 +1104,7 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
         if ( perform_cleanup )
         {
             rob->pop();
+            if ( rename_at_dispatch ) renamed_in_rob[rob_num]--;
 
             #ifdef VANADIS_BUILD_DEBUG
             if ( output->getVerboseLevel() >= 8 )
@@ -1060,6 +1162,7 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
             {
 
                 VanadisInstruction* delay_ins = rob->pop();
+                if ( rename_at_dispatch ) renamed_in_rob[rob_num]--;
                 #ifdef VANADIS_BUILD_DEBUG
                 output->verbose(
                     CALL_INFO, 8, VANADIS_DBG_RETIRE_FLG, "----> Retire delay: 0x%" PRI_ADDR " / %s\n", delay_ins->getInstructionAddress(),
@@ -1509,6 +1612,12 @@ VanadisCore::tick(SST::Cycle_t cycle)
         resetRegisterUseTemps(i, thread_decoders[i]->countISAIntReg(), thread_decoders[i]->countISAFPReg());
     }
 
+    if ( rename_at_dispatch ) {
+        for ( uint32_t thr = 0; thr < hw_threads; ++thr ) {
+            performRename(thr);
+        }
+    }
+
     {
     std::vector<uint32_t> rob_start(hw_threads,0);
     std::vector<int> unallocated_memory_op_seen(hw_threads,false);
@@ -1528,7 +1637,8 @@ VanadisCore::tick(SST::Cycle_t cycle)
         // we found a unblocked hardware thread
         if ( cnt ) {
             auto thr = m_curIssueHwThread;
-            rc[thr] = performIssue(cycle, thr, rob_start[thr], unallocated_memory_op_seen[thr]);
+            rc[thr] = rename_at_dispatch ? performIssueRenamed(cycle, thr, rob_start[thr], unallocated_memory_op_seen[thr])
+                                         : performIssue(cycle, thr, rob_start[thr], unallocated_memory_op_seen[thr]);
             ++m_curIssueHwThread;
             m_curIssueHwThread %= (hw_threads);
             cnt = (hw_threads);
@@ -1830,6 +1940,7 @@ VanadisCore::assignRegistersToInstruction(
             isa_table->incIntWrite(ins_isa_reg);
 
             ins->setPhysIntRegOut(i, out_reg);
+            if ( rename_at_dispatch ) int_phys_reg_producer[out_reg] = ins;
         }
 
         // Set current ISA registers required for output
@@ -1857,6 +1968,7 @@ VanadisCore::assignRegistersToInstruction(
             isa_table->incFPWrite(ins_isa_reg);
 
             ins->setPhysFPRegOut(i, out_reg);
+            if ( rename_at_dispatch ) fp_phys_reg_producer[out_reg] = ins;
         }
     }
 
@@ -1892,6 +2004,7 @@ VanadisCore::assignRegistersToInstruction(
         }
     }
 
+    ins->markRegistersAssigned();
     return 0;
 }
 
@@ -1900,6 +2013,8 @@ VanadisCore::recoverRetiredRegisters(
     VanadisInstruction* ins, VanadisRegisterStack* int_regs, VanadisRegisterStack* fp_regs,
     VanadisISATable* issue_isa_table, VanadisISATable* retire_isa_table)
 {
+    if ( rename_at_dispatch ) clearRegisterProducers(ins);
+
     std::vector<uint16_t> recovered_phys_reg_int;
     std::vector<uint16_t> recovered_phys_reg_fp;
 
@@ -2168,14 +2283,16 @@ VanadisCore::clearROBMisspeculate(const uint32_t hw_thr)
     // Delete all the instructions which we aren't going to process
     for ( size_t i = 0; i < thr_rob->size(); ++i ) {
         VanadisInstruction* next_ins = thr_rob->peekAt(i);
-        if ( next_ins->completedIssue() )  {
+        if ( next_ins->registersAssigned() )  {
             next_ins->returnOutRegs( int_register_stack, fp_register_stack  );
+            if ( rename_at_dispatch ) clearRegisterProducers(next_ins);
         }
         delete next_ins;
     }
 
     // clear the ROB entries and reset
     thr_rob->clear();
+    renamed_in_rob[hw_thr] = 0;
 }
 
 void
@@ -2640,6 +2757,13 @@ VanadisCore::resetHwThread(uint32_t thr)
     auto fp_stack = fp_register_stack;
     auto reg_file = register_files[thr];
     auto thr_rob = rob[thr];
+
+    if ( rename_at_dispatch ) {
+        for ( size_t i = 0; i < thr_rob->size(); ++i ) {
+            if ( thr_rob->peekAt(i)->registersAssigned() ) clearRegisterProducers(thr_rob->peekAt(i));
+        }
+    }
+    renamed_in_rob[thr] = 0;
 
     thr_rob->clear();
 

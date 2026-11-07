@@ -78,6 +78,8 @@ class VanadisInstruction
             trap_error_           = false;
             has_executed_         = false;
             has_issued_           = false;
+            has_registers_assigned_ = false;
+            is_serializing_       = false;
             end_uop_group_        = false;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -112,6 +114,8 @@ class VanadisInstruction
             trap_error_           = copy_me.trap_error_;
             has_executed_         = copy_me.has_executed_;
             has_issued_           = copy_me.has_issued_;
+            has_registers_assigned_ = copy_me.has_registers_assigned_;
+            is_serializing_       = copy_me.is_serializing_;
             end_uop_group_        = copy_me.end_uop_group_;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -410,6 +414,19 @@ class VanadisInstruction
         virtual void markExecuted() { has_executed_ = true; }
         void markIssued() { has_issued_ = true; }
 
+        // The instruction holds its physical registers: at issue, or at dispatch with rename_at_dispatch.
+        bool registersAssigned() const { return has_registers_assigned_; }
+        void markRegistersAssigned() { has_registers_assigned_ = true; }
+
+        // With rename_at_dispatch a serializing instruction issues at the front of the ROB, and nothing younger issues
+        // until it retires.
+        bool isSerializing() const { return is_serializing_; }
+        void markSerializing() { is_serializing_ = true; }
+
+        // With rename_at_dispatch a store issues when its address is known; these inputs are read when it goes to memory.
+        virtual bool isStoreDataIntRegIn(const uint16_t index) const { return false; }
+        virtual bool isStoreDataFPRegIn(const uint16_t index) const { return false; }
+
         bool checkFrontOfROB() const { return is_front_of_rob_; }
         void markFrontOfROB() { is_front_of_rob_ = true; }
 
@@ -462,6 +479,8 @@ class VanadisInstruction
         bool trap_error_ = false;
         bool has_executed_;
         bool has_issued_;
+        bool has_registers_assigned_;
+        bool is_serializing_;
         bool end_uop_group_;
         bool is_front_of_rob_;
         bool has_rob_slot_;

@@ -720,7 +720,11 @@ protected:
         if ( !L && op0 == 0 && crn == 0b0011 && rt == 31 && op1 == 3 ) {
             switch ( op2 ) {
             case 2: return nop();    // CLREX: the monitor is cleared by the next store-conditional
-            case 6: return nop();    // ISB: the core has no self-modifying-code window to close here
+            case 6: {                // ISB: nothing younger issues until it retires, which is what a following MRS needs
+                auto* isb = op(bundle, addr, "ISB", INST_INT_ARITH, [](VanadisArm64Inst&, VanadisRegisterFile*) {}, {}, {});
+                isb->markSerializing();
+                return true;
+            }
             case 4:
             case 5:
             case 1:

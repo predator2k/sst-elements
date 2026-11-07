@@ -44,6 +44,8 @@ public:
 
     virtual bool isPartialStore() override { return true; }
 
+    bool storeDataReadAtMemory() const override { return false; }
+
     VanadisPartialStoreInstruction* clone() override { return new VanadisPartialStoreInstruction(*this); }
 
     virtual VanadisFunctionalUnitType getInstFuncType() const override { return INST_STORE; }

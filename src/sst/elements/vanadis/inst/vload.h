@@ -74,6 +74,8 @@ public:
     virtual void finishLoad(VanadisRegisterFile* regFile) {}
 
     virtual bool                      isPartialLoad() const { return false; }
+    // A load of one register may take all its bytes from an older store.
+    virtual bool                      takesForwardedStoreData() const { return MEM_TRANSACTION_NONE == memAccessType && ! isPartialLoad(); }
     virtual VanadisFunctionalUnitType getInstFuncType() const { return INST_LOAD; }
     virtual const char*               getInstCode() const
     {
