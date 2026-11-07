@@ -115,6 +115,8 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     misprediction_extra_cycles = params.find<uint64_t>("misprediction_extra_cycles", 0);
     recover_at_execute = params.find<bool>("recover_at_execute", false);
     rob_instruction_limit = params.find<uint32_t>("reorder_instructions", 0);
+    queue_entries[QUEUE_INTEGER] = params.find<uint32_t>("integer_queue_entries", 0);
+    queue_entries[QUEUE_FP] = params.find<uint32_t>("fp_queue_entries", 0);
     unresolved_branches.resize(hw_threads);
     next_program_sequence.assign(hw_threads, 1);
     decode_resume_cycle.assign(hw_threads, 0);
@@ -546,6 +548,18 @@ VanadisCore::orderPipes(SST::Params& params, const char* key, std::vector<Vanadi
     units = ordered;
 }
 
+VanadisCore::IssueQueue
+VanadisCore::issueQueueOf(const VanadisInstruction* ins)
+{
+    const VanadisTimingRecord* t = ins->getTiming();
+    if ( nullptr != t && 0 == t->latency ) return QUEUE_NONE;
+    switch ( ins->getInstFuncType() ) {
+    case INST_INT_ARITH: case INST_INT_DIV: return QUEUE_INTEGER;
+    case INST_FP_ARITH: case INST_FP_DIV: return QUEUE_FP;
+    default: return QUEUE_NONE;
+    }
+}
+
 bool
 VanadisCore::forwardingPenalty(const VanadisInstruction* producer, const VanadisInstruction* consumer) const
 {
@@ -571,6 +585,12 @@ VanadisCore::performRename(const uint32_t hw_thr)
             if ( int_register_stack->unused() < ins->countISAIntRegOut() || fp_register_stack->unused() < ins->countISAFPRegOut() ) {
                 return;
             }
+        }
+        // The micro-op waits in the issue queue of its unit from rename to issue; rename stops while that queue is full.
+        const IssueQueue queue = issueQueueOf(ins);
+        if ( QUEUE_NONE != queue && queue_entries[queue] > 0 ) {
+            if ( queue_used[queue] >= queue_entries[queue] ) return;
+            queue_used[queue]++;
         }
 
         const auto ins_type = ins->getInstFuncType();
@@ -721,6 +741,8 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
         }
         if ( can_issue && ( at_issue || 0 == allocateFunctionalUnit(ins) ) ) {
             if ( recover_at_execute && INST_BRANCH == ins_type ) unresolved_branches[hwThr].push_back(ins);
+            const IssueQueue queue = issueQueueOf(ins);
+            if ( QUEUE_NONE != queue && queue_entries[queue] > 0 && queue_used[queue] > 0 ) queue_used[queue]--;
             ins->markIssued();
             ins->setIssueCycle(cycle);
             ins->setAccumulatorReadyCycle(cycle + ins->getAccumulatorCycles());
@@ -2457,6 +2479,10 @@ VanadisCore::squashYounger(const uint64_t cycle, const uint32_t thr, VanadisSpec
         if ( ( INST_LOAD == type || INST_STORE == type || INST_FENCE == type ) && ins->getMemorySequence() != 0 ) {
             first_memory = std::min(first_memory, ins->getMemorySequence());
         }
+        if ( ins->registersAssigned() && ! ins->completedIssue() ) {
+            const IssueQueue queue = issueQueueOf(ins);
+            if ( QUEUE_NONE != queue && queue_entries[queue] > 0 && queue_used[queue] > 0 ) queue_used[queue]--;
+        }
         if ( ins->registersAssigned() ) {
             for ( uint16_t k = 0; k < ins->countISAIntRegIn(); ++k ) issue_table->decIntRead(ins->getISAIntRegIn(k));
             for ( uint16_t k = 0; k < ins->countISAFPRegIn(); ++k ) issue_table->decFPRead(ins->getISAFPRegIn(k));
@@ -2569,6 +2595,11 @@ VanadisCore::clearROBMisspeculate(const uint32_t hw_thr)
         if ( next_ins->registersAssigned() )  {
             next_ins->returnOutRegs( int_register_stack, fp_register_stack  );
             if ( rename_at_dispatch ) clearRegisterProducers(next_ins);
+            // A renamed micro-op that has not issued leaves its issue queue.
+            if ( ! next_ins->completedIssue() ) {
+                const IssueQueue queue = issueQueueOf(next_ins);
+                if ( QUEUE_NONE != queue && queue_entries[queue] > 0 && queue_used[queue] > 0 ) queue_used[queue]--;
+            }
         }
         delete next_ins;
     }
