@@ -39,7 +39,7 @@ MESIL1::MESIL1(ComponentId_t id, Params& params, Params& owner_params, bool pref
     bool MESI = params.find<bool>("protocol", true);
     llsc_block_cycles_ = params.find<Cycle_t>("llsc_block_cycles", 0);
     pipelined_read_hits_ = params.find<bool>("pipelined_read_hits", false);
-    streaming_write_misses_ = params.find<uint32_t>("streaming_write_misses", 0);
+    streaming_writes_ = params.find<bool>("streaming_writes", false);
 
     std::string frequency = params.find<std::string>("cache_frequency", "");
 
@@ -341,6 +341,18 @@ bool MESIL1::handleWrite(MemEvent* event, bool in_mshr) {
  * Handle cacheable GetX/Write requests
  * May also be store-conditional or write-unlock
  */
+/* streaming_writes: the bytes a write covers in one of the last write-miss lines; a line of 64 bytes or fewer is full
+ * when every bit of its mask is set. */
+void MESIL1::noteWrittenBytes(Addr line, Addr offset, uint64_t size) {
+    for (auto& entry : write_miss_lines_) {
+        if (entry.first != line) continue;
+        const uint64_t bytes = line_size_ < 64 ? line_size_ : 64;
+        for (uint64_t b = offset; b < offset + size && b < bytes; ++b) entry.second |= 1ull << b;
+        if (bytes < 64) entry.second |= ~0ull << bytes;
+        return;
+    }
+}
+
 bool MESIL1::handleGetX(MemEvent* event, bool in_mshr) {
     Addr addr = event->getBaseAddr();
     L1CacheLine* line = cache_array_->lookup(addr, true);
@@ -397,11 +409,16 @@ bool MESIL1::handleGetX(MemEvent* event, bool in_mshr) {
                     mshr_->setProfiled(addr);
                 }
 
-                // A write miss to the line after the last one continues a run; a long enough run is streaming.
-                if (streaming_write_misses_ > 0 && !in_mshr) {
-                    write_miss_run_ = (addr == last_write_miss_line_ + line_size_) ? write_miss_run_ + 1 : 1;
-                    last_write_miss_line_ = addr;
-                    if (write_miss_run_ >= streaming_write_misses_) event->setFlag(MemEvent::F_STREAMWRITE);
+                // A write miss after write misses to the two lines below, the lower one written in whole, is streaming.
+                if (streaming_writes_ && !in_mshr) {
+                    bool below = false, full = false;
+                    for (const auto& entry : write_miss_lines_) {
+                        if (entry.first + line_size_ == addr) below = true;
+                        if (entry.first + 2 * line_size_ == addr && entry.second == ~0ull) full = true;
+                    }
+                    if (below && full) event->setFlag(MemEvent::F_STREAMWRITE);
+                    if (write_miss_lines_.size() >= STREAM_LINES) write_miss_lines_.erase(write_miss_lines_.begin());
+                    write_miss_lines_.emplace_back(addr, 0);
                 }
                 send_time = forwardMessage(event, line_size_, 0, nullptr, Command::GetX);
                 line->setState(IM);
@@ -457,6 +474,7 @@ bool MESIL1::handleGetX(MemEvent* event, bool in_mshr) {
 
             if (!event->isStoreConditional() || line->isAtomic(event->getThreadID())) { // Don't write on a non-atomic SC
                 line->setData(event->getPayload(), event->getAddr() - event->getBaseAddr());
+                if (streaming_writes_) noteWrittenBytes(addr, event->getAddr() - event->getBaseAddr(), event->getPayload().size());
                 line->atomicEnd();
                 if (mem_h_is_debug_addr(addr))
                     printDataValue(addr, line->getData(), true);
@@ -1346,6 +1364,7 @@ bool MESIL1::handleGetXResp(MemEvent* event, bool in_mshr) {
                 if (request->getCmd() == Command::Write || request->getCmd() == Command::GetX) {
                     if (!request->isStoreConditional() || line->isAtomic(request->getThreadID())) { // Normal or successful store-conditional
                         line->setData(request->getPayload(), offset);
+                        if (streaming_writes_) noteWrittenBytes(addr, offset, request->getPayload().size());
 
                         if (mem_h_is_debug_addr(addr))
                             printDataValue(addr, line->getData(), true);
@@ -2144,9 +2163,8 @@ void MESIL1::serialize_order(SST::Core::Serialization::serializer& ser) {
     SST_SER(protocol_read_state_);
     SST_SER(llsc_block_cycles_);
     SST_SER(pipelined_read_hits_);
-    SST_SER(streaming_write_misses_);
-    SST_SER(last_write_miss_line_);
-    SST_SER(write_miss_run_);
+    SST_SER(streaming_writes_);
+    SST_SER(write_miss_lines_);
     SST_SER(llsc_timeout_);
     SST_SER(cache_array_);
     SST_SER(stat_event_stalled_for_lock);

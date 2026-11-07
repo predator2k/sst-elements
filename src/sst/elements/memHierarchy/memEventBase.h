@@ -42,8 +42,8 @@ public:
     static const uint32_t F_LLSC            = 0x00000100;
     static const uint32_t F_FAIL            = 0x00001000;
     static const uint32_t F_NORESPONSE      = 0x00010000;
-    /* A write miss that an L1 found in a run of write misses to consecutive lines (streaming_write_misses): the core
-     * writes the whole line, so its response takes no data bandwidth on the way up. */
+    /* A write miss that an L1 found to continue a stream of whole-line writes (streaming_writes): its response takes no
+     * data bandwidth on the way up. */
     static const uint32_t F_STREAMWRITE     = 0x00100000;
 
 
