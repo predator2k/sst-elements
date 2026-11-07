@@ -40,7 +40,9 @@ public:
         { "allocations_per_misprediction", "Tagged tables longer than the provider in which a wrong prediction takes a free entry, shortest first", "1" },
         { "local_history_entries", "Branches whose own outcomes a local predictor keeps, a power of two; 0 has no local predictor", "0" },
         { "local_history_bits", "Outcomes of its own that a branch's local history holds, up to 32", "16" },
-        { "local_pattern_entries", "Entries of the table indexed by a branch and its local history, a power of two", "16384" })
+        { "local_pattern_entries", "Entries of the table indexed by a branch and its local history, a power of two", "16384" },
+        { "indirect_target_entries", "Entries of the target table indexed by a branch with a register target and the history of such targets, a power of two; 0 has none and such a branch takes its last target", "0" },
+        { "indirect_history_targets", "Register targets in the history that indexes the target table, up to 16", "8" })
 
     SST_ELI_DOCUMENT_STATISTICS(
         { "direction_predictions", "Conditional branches predicted", "branches", 1 },
@@ -56,6 +58,12 @@ public:
         const uint32_t local_histories = params.find<uint32_t>("local_history_entries", 0);
         local_history_bits_ = std::min<uint32_t>(32, std::max<uint32_t>(1, params.find<uint32_t>("local_history_bits", 16)));
         const uint32_t local_patterns = params.find<uint32_t>("local_pattern_entries", 16384);
+        const uint32_t indirect_targets = params.find<uint32_t>("indirect_target_entries", 0);
+        indirect_history_targets_ = std::min<uint32_t>(16, std::max<uint32_t>(1, params.find<uint32_t>("indirect_history_targets", 8)));
+        if ( indirect_targets > 0 ) {
+            if ( ! powerOfTwo(indirect_targets) ) output_->fatal(CALL_INFO, -1, "indirect_target_entries must be a power of two\n");
+            indirect_entries_.assign(indirect_targets, IndirectEntry{});
+        }
         std::vector<uint32_t> lengths;
         params.find_array<uint32_t>("history_lengths", lengths);
         if ( lengths.empty() ) lengths = { 4, 8, 16, 32, 64, 128, 256 };
@@ -111,6 +119,10 @@ public:
         if ( ! in_flight_unconditional_.empty() && in_flight_unconditional_.front().address == ins_addr ) {
             const InFlightOther other = in_flight_unconditional_.front();
             in_flight_unconditional_.pop_front();
+            if ( other.register_target ) {
+                if ( ! indirect_entries_.empty() ) trainIndirect(other, next_addr);
+                retired_target_history_ = pushTarget(retired_target_history_, next_addr);
+            }
             if ( VanadisBranchClass::CALL == other.branch_class ) {
                 retired_returns_.push_back(other.fall_through);
                 if ( retired_returns_.size() > return_stack_entries_ ) retired_returns_.pop_front();
@@ -137,30 +149,43 @@ public:
             return predictConditional(addr, fall_through);
         case VanadisBranchClass::RETURN:
         {
-            in_flight_unconditional_.push_back({ addr, fall_through, branch_class });
+            InFlightOther other{ addr, fall_through, branch_class };
+            other.register_target = register_target_;
+            uint64_t target = 0;
             if ( ! returns_.empty() ) {
-                const uint64_t target = returns_.back();
+                target = returns_.back();
                 returns_.pop_back();
-                return target;
             }
-            return contains(addr) ? predictAddress(addr) : fall_through;
+            else {
+                target = contains(addr) ? predictAddress(addr) : fall_through;
+            }
+            return recordOther(other, target);
         }
         case VanadisBranchClass::CALL:
-            in_flight_unconditional_.push_back({ addr, fall_through, branch_class });
+        {
+            InFlightOther other{ addr, fall_through, branch_class };
+            other.register_target = register_target_;
             returns_.push_back(fall_through);
             if ( returns_.size() > return_stack_entries_ ) returns_.pop_front();
-            return contains(addr) ? predictAddress(addr) : fall_through;
+            return recordOther(other, predictOtherTarget(other));
+        }
         default:
-            in_flight_unconditional_.push_back({ addr, fall_through, branch_class });
-            return contains(addr) ? predictAddress(addr) : fall_through;
+        {
+            InFlightOther other{ addr, fall_through, branch_class };
+            other.register_target = register_target_;
+            return recordOther(other, predictOtherTarget(other));
+        }
         }
     }
+
+    void noteRegisterTarget(const bool register_target) override { register_target_ = register_target; }
 
     void flush() override
     {
         in_flight_.clear();
         in_flight_unconditional_.clear();
         history_ = retired_history_;
+        target_history_ = retired_target_history_;
         returns_ = retired_returns_;
     }
 
@@ -177,6 +202,12 @@ public:
             const bool taken = last && resolved_conditional ? next != in_flight_[k].fall_through : in_flight_[k].prediction;
             in_flight_[k].history_outcome = taken;
             shiftIn(history_, taken);
+        }
+        target_history_ = retired_target_history_;
+        for ( size_t k = 0; k < in_flight_unconditional_.size(); ++k ) {
+            InFlightOther& other = in_flight_unconditional_[k];
+            if ( k + 1 == in_flight_unconditional_.size() && ! resolved_conditional ) other.predicted_target = next;
+            if ( other.register_target ) target_history_ = pushTarget(target_history_, other.predicted_target);
         }
         returns_ = retired_returns_;
         for ( const InFlightOther& other : in_flight_unconditional_ ) {
@@ -263,7 +294,92 @@ private:
         uint64_t address;
         uint64_t fall_through;
         VanadisBranchClass branch_class;
+        //! Whether the target comes from a register, the predicted target, and the target table entry and tag.
+        bool register_target = false;
+        uint64_t predicted_target = 0;
+        uint32_t indirect_index = 0;
+        uint16_t indirect_tag = 0;
     };
+
+    //! An entry of the indirect target table: a tag, a target and a confidence of 0 to 3.
+    struct IndirectEntry
+    {
+        uint16_t tag = 0;
+        uint64_t target = 0;
+        uint8_t confidence = 0;
+    };
+
+    /*
+     * The target of a call or other branch that is not a return.
+     * Handling: a branch with a register target whose entry in the target table matches and has some confidence takes
+     * that entry's target; every other branch takes its last target, or falls through without one. Sets the table index
+     * and tag of other. Emits nothing.
+     */
+    uint64_t predictOtherTarget(InFlightOther& other)
+    {
+        const uint64_t last = contains(other.address) ? targets_.find(other.address)->second : other.fall_through;
+        if ( ! other.register_target || indirect_entries_.empty() ) return last;
+        const uint64_t mixed = ((other.address >> 2) * 0x9E3779B97F4A7C15ull) ^ (target_history_ * 0xC2B2AE3D27D4EB4Full);
+        other.indirect_index = static_cast<uint32_t>((mixed >> 24) & (indirect_entries_.size() - 1));
+        other.indirect_tag = static_cast<uint16_t>((mixed >> 50) & ((1u << TAG_BITS) - 1));
+        const IndirectEntry& entry = indirect_entries_[other.indirect_index];
+        if ( entry.tag == other.indirect_tag && entry.confidence > 0 ) return entry.target;
+        return last;
+    }
+
+    /*
+     * Puts a predicted call, return or other branch in flight.
+     * Handling: records the predicted target and, for a register target, shifts it into the speculative target history.
+     * Emits nothing. Returns the target.
+     */
+    uint64_t recordOther(InFlightOther& other, const uint64_t target)
+    {
+        other.predicted_target = target;
+        if ( other.register_target ) target_history_ = pushTarget(target_history_, target);
+        in_flight_unconditional_.push_back(other);
+        return target;
+    }
+
+    /*
+     * Trains the target table with the target a branch with a register target took.
+     * Handling: a matching entry gains confidence when its target was right and loses it otherwise, taking the new
+     * target at no confidence; an entry of another branch and history with no confidence is replaced, one with some
+     * loses it. Emits nothing.
+     */
+    void trainIndirect(const InFlightOther& other, const uint64_t target)
+    {
+        if ( VanadisBranchClass::RETURN == other.branch_class ) return;
+        IndirectEntry& entry = indirect_entries_[other.indirect_index];
+        if ( entry.tag == other.indirect_tag ) {
+            if ( entry.target == target ) {
+                if ( entry.confidence < 3 ) ++entry.confidence;
+            }
+            else if ( entry.confidence > 0 ) {
+                --entry.confidence;
+            }
+            else {
+                entry.target = target;
+                entry.confidence = 1;
+            }
+        }
+        else if ( entry.confidence == 0 ) {
+            entry.tag = other.indirect_tag;
+            entry.target = target;
+            entry.confidence = 1;
+        }
+        else {
+            --entry.confidence;
+        }
+    }
+
+    //! The history of register targets with a target shifted in: four bits of each, newest lowest.
+    uint64_t pushTarget(const uint64_t history, const uint64_t target) const
+    {
+        const uint64_t bits = ((target >> 2) ^ (target >> 6) ^ (target >> 10) ^ (target >> 14)) & 0xF;
+        const uint32_t kept = 4 * indirect_history_targets_;
+        const uint64_t mask = kept >= 64 ? ~0ull : ((1ull << kept) - 1);
+        return ((history << 4) | bits) & mask;
+    }
 
     static bool powerOfTwo(const uint32_t value) { return value != 0 && (value & (value - 1)) == 0; }
 
@@ -519,6 +635,13 @@ private:
     std::vector<int8_t> local_choosers_;
     std::vector<LocalEntry> local_patterns_;
     uint32_t local_history_bits_ = 16;
+    //! The indirect target table, the speculative and retired histories of register targets, indirect_history_targets,
+    //! and whether the branch of the next prediction has a register target.
+    std::vector<IndirectEntry> indirect_entries_;
+    uint64_t target_history_ = 0;
+    uint64_t retired_target_history_ = 0;
+    uint32_t indirect_history_targets_ = 8;
+    bool register_target_ = false;
 };
 
 } // namespace Vanadis

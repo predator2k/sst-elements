@@ -47,6 +47,10 @@ public:
         return contains(addr) ? predictAddress(addr) : fall_through;
     }
 
+    // Whether the branch of the next predictNext call takes its target from a register (BR, BLR, RET). A unit that keeps
+    // a history of such targets uses it; the default ignores it.
+    virtual void noteRegisterTarget(const bool register_target) {}
+
     // Every instruction in flight was squashed: the speculative state returns to the retired state.
     virtual void flush() {}
 

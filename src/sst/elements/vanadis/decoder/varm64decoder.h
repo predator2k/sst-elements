@@ -47,6 +47,7 @@ struct A64SveDtype;
 // table every micro-op keeps the latency of its functional unit.
 #define A64_TIMING_CLASSES(X)                                                                                              \
     X(INT_ALU, "int_alu") X(INT_ALU_FLAGS, "int_alu_flags") X(INT_ALU_SHIFT, "int_alu_shift") X(INT_BFM, "int_bfm")      \
+    X(INT_ATOMIC, "int_atomic") X(INT_ATOMIC_NO_RETURN, "int_atomic_no_return")                                          \
     X(INT_EXTR, "int_extr") X(INT_MOVE_ZERO, "int_move_zero") X(INT_INTERNAL, "int_internal") X(INT_MUL, "int_mul")        \
     X(INT_MADD, "int_madd") X(INT_MULH, "int_mulh") X(INT_DIV, "int_div") X(INT_CRC, "int_crc")                          \
     X(FP_ALU, "fp_alu") X(FP_MUL, "fp_mul") X(FP_MLA, "fp_mla") X(FP_CMP, "fp_cmp") X(FP_PAIRWISE, "fp_pairwise")         \
@@ -231,6 +232,8 @@ public:
                         if ( next_ins->getInstFuncType() == INST_BRANCH ) {
                             VanadisSpeculatedInstruction* next_spec_ins =
                                 dynamic_cast<VanadisSpeculatedInstruction*>(next_ins);
+                            const VanadisArm64Branch* register_branch = dynamic_cast<const VanadisArm64Branch*>(next_ins);
+                            branch_predictor->noteRegisterTarget(register_branch != nullptr && register_branch->takesRegisterTarget());
                             const uint64_t predicted_address =
                                 branch_predictor->predictNext(ip, ip + bundle->pcIncrement(), next_spec_ins->getBranchClass());
                             next_spec_ins->setSpeculatedAddress(predicted_address);
@@ -1540,7 +1543,7 @@ protected:
         const uint32_t bytes = 1u << size;
         if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         loadInt(bundle, addr, rs(rn), 0, A64Reg::T1, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
-        tc(op(bundle, addr, "CASVAL", INST_INT_ARITH, casValue, { A64Reg::T1, rz(rs_), rz(rt) }, { A64Reg::T2 }), A64Tc::INT_ALU)->c = bytes;
+        tc(op(bundle, addr, "CASVAL", INST_INT_ARITH, casValue, { A64Reg::T1, rz(rs_), rz(rt) }, { A64Reg::T2 }), A64Tc::INT_ATOMIC)->c = bytes;
         rmwStoreAndRetry(bundle, addr, rs(rn), bytes, rs_, A);
         return true;
     }
@@ -1629,7 +1632,10 @@ protected:
         }
         if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         loadInt(bundle, addr, rs(rn), 0, A64Reg::T1, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
-        auto* i = tc(op(bundle, addr, "ATOMICOP", INST_INT_ARITH, atomicOp, { A64Reg::T1, rz(rs_) }, { A64Reg::T2 }), A64Tc::INT_ALU);
+        // The operation stands for the time the atomic takes in the cache; a form without a returned value (STADD and the
+        // other ST aliases, Rt the zero register) is a class of its own.
+        auto* i = tc(op(bundle, addr, "ATOMICOP", INST_INT_ARITH, atomicOp, { A64Reg::T1, rz(rs_) }, { A64Reg::T2 }),
+            rt == 31 && kind != 8 ? A64Tc::INT_ATOMIC_NO_RETURN : A64Tc::INT_ATOMIC);
         i->b = kind;
         i->c = bytes;
         rmwStoreAndRetry(bundle, addr, rs(rn), bytes, rt, A);
