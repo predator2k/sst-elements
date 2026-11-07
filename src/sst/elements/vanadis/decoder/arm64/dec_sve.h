@@ -218,6 +218,7 @@ VanadisARM64Decoder::decodeSveInt(uint64_t addr, uint32_t ins, VanadisInstructio
         // ADDVL, ADDPL, and RDVL below
         const uint64_t scale = bit(ins, 22) ? vector_bytes / 8 : vector_bytes;
         addImmTo(bundle, addr, rs(rd), rs(rm), sext(bits(ins, 10, 5), 6) * static_cast<int64_t>(scale));
+        tc(pending_, A64Tc::P_COUNT);
         return true;
     }
     if ( (ins & 0xFFFFF800) == 0x04BF5000 ) {

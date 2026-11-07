@@ -376,10 +376,8 @@ bool Cache::processEvent(MemEventBase* ev, bool retry) {
 /* Arbitrate for access. Return whether successful */
 bool Cache::arbitrateAccess(Addr addr) {
     if (!banked_) {
-        if (addrsThisCycle_.find(addr) == addrsThisCycle_.end()) {
-            return true;
-        }
-        return false;
+        auto found = addrsThisCycle_.find(addr);
+        return found == addrsThisCycle_.end() || found->second < sameLineAccessesPerCycle_;
     }
 
     Addr bank = coherenceMgr_->getBank(addr);
@@ -393,7 +391,7 @@ bool Cache::arbitrateAccess(Addr addr) {
 
 /* Block banks that have been accessed */
 void Cache::updateAccessStatus(Addr addr) {
-    addrsThisCycle_.insert(addr);
+    addrsThisCycle_[addr]++;
     if (banked_) {
         Addr bank = coherenceMgr_->getBank(addr);
         bankStatus_[bank] = true;

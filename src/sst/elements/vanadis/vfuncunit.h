@@ -84,7 +84,8 @@ public:
                                                   : ( ins->getTimedLatency() > 0 ? ins->getTimedLatency() - 1 : 0 );
         pending_execute.push_back(new VanadisFunctionalUnitInsRecord(ins, cycles));
         accept_this_cycle = false;
-        busy_cycles = nullptr == timing || timing->issue_interval < 1 ? 0 : timing->issue_interval - 1;
+        // The pipe takes nothing in the issue_interval - 1 cycles after this one; the count drops at each tick before issue.
+        busy_cycles = nullptr == timing || timing->issue_interval <= 1 ? 0 : timing->issue_interval;
     }
 
     uint16_t getUnitID() const { return fu_id; }

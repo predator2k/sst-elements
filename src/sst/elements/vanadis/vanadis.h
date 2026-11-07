@@ -126,6 +126,7 @@ public:
         { "misprediction_extra_cycles", "Cycles decode waits after a branch misprediction, above the time the flush takes", "0"},
         { "renames_per_cycle", "With rename_at_dispatch, micro-ops renamed per cycle", "decodes_per_cycle"},
         { "dividers_block", "A divider takes no new instruction until the current one has executed", "false"},
+        { "fp_dividers_block", "An FP divider takes no new instruction until the current one has executed; a timing class's issue interval can pipeline it instead", "dividers_block"},
         { "recover_at_execute", "With rename_at_dispatch, a mispredicted branch squashes the younger instructions when it executes, and the older ones go on; false squashes at retire", "false"},
         { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },

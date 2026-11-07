@@ -367,7 +367,8 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
         fp_div_cycles);
 
     for ( uint16_t i = 0; i < fp_div_units; ++i ) {
-        fu_fp_div.push_back(new VanadisFunctionalUnit(fu_id++, INST_FP_DIV, fp_div_cycles, params.find<bool>("dividers_block", false)));
+        fu_fp_div.push_back(new VanadisFunctionalUnit(fu_id++, INST_FP_DIV, fp_div_cycles,
+            params.find<bool>("fp_dividers_block", params.find<bool>("dividers_block", false))));
     }
 
     //////////////////////////////////////////////////////////////////////////////////////
@@ -548,7 +549,7 @@ VanadisCore::forwardingPenalty(const VanadisInstruction* producer, const Vanadis
 {
     const VanadisTimingRecord* p = producer->getTiming();
     const VanadisTimingRecord* c = consumer->getTiming();
-    if ( nullptr == p || nullptr == c || ! p->vector_pipe || ! c->vector_pipe || 0 == c->region_in ) return false;
+    if ( nullptr == p || nullptr == c || p == c || ! p->vector_pipe || ! c->vector_pipe || 0 == c->region_in ) return false;
     return 0 == ( p->region_out & c->region_in );
 }
 

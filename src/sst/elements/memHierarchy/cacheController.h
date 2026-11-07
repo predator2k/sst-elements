@@ -88,6 +88,7 @@ public:
             {"force_noncacheable_reqs", "(bool) Used for verification purposes. All requests are considered to be 'noncacheable'. Options: 0[off], 1[on]", "false"},
             {"min_packet_size",         "(string) Number of bytes in a request/response not including payload (e.g., addr + cmd). Specify in B.", "8B"},
             {"banks",                   "(uint) Number of cache banks: One access per bank per cycle. Use '0' to simulate no bank limits (only limits on bandwidth then are max_requests_per_cycle and *_link_width", "0"},
+            {"same_line_accesses_per_cycle", "(uint) Without banks: accesses to one cache line accepted in a cycle", "1"},
             {"node",			        "(uint) Node number in multinode environment", "0"})
 
     SST_ELI_DOCUMENT_PORTS(
@@ -303,7 +304,8 @@ private:
     uint64_t                    timestamp_;
     int                         requestsThisCycle_;
     std::vector<bool>           bankStatus_;
-    std::set<Addr>              addrsThisCycle_;
+    std::map<Addr, uint32_t>    addrsThisCycle_;
+    uint32_t                    sameLineAccessesPerCycle_ = 1;
     std::list<MemEventBase*>    retryBuffer_;
     std::list<MemEventBase*>    eventBuffer_;
     std::queue<MemEventBase*>   prefetchBuffer_;

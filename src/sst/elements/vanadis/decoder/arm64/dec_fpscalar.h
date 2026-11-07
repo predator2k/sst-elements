@@ -327,7 +327,7 @@ VanadisARM64Decoder::decodeSimdStructure(uint64_t addr, uint32_t ins, VanadisIns
             if ( L ) {
                 loadFp(bundle, addr, base, k * ebytes, temps[k], ebytes);
                 if ( replicate ) {
-                    auto* i = tc(op(bundle, addr, "LDR.REP", INST_FP_ARITH, laneReplicate, {}, {}, { temps[k] }, { vreg(k) }), A64Tc::V_MISC);
+                    auto* i = tc(op(bundle, addr, "LDR.REP", INST_FP_ARITH, laneReplicate, {}, {}, { temps[k] }, { vreg(k) }), A64Tc::INT_INTERNAL);
                     i->a = ebytes;
                     i->b = reg_bytes;
                 }

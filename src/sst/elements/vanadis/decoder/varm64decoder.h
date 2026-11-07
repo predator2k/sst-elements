@@ -60,7 +60,7 @@ struct A64SveDtype;
     X(V_SAT_NARROW, "v_sat_narrow") X(V_ACCUMULATE, "v_accumulate") X(V_REDUCE_S, "v_reduce_s") X(V_REDUCE_H, "v_reduce_h") \
     X(V_REDUCE_B, "v_reduce_b") X(V_MUL, "v_mul") X(V_MLA, "v_mla") X(V_DOT, "v_dot") X(V_PMULL, "v_pmull")               \
     X(V_TBL_LONG, "v_tbl_long") X(V_STRUCT_PERMUTE, "v_struct_permute")                                                   \
-    X(CRYPTO_AES, "crypto_aes") X(CRYPTO_SHA_FAST, "crypto_sha_fast") X(CRYPTO_SHA_SLOW, "crypto_sha_slow")               \
+    X(CRYPTO_AES, "crypto_aes") X(CRYPTO_AES_MIX, "crypto_aes_mix") X(CRYPTO_SHA_FAST, "crypto_sha_fast") X(CRYPTO_SHA_SLOW, "crypto_sha_slow")               \
     X(CRYPTO_SHA3, "crypto_sha3") X(BF_DOT, "bf_dot") X(BF_MMLA, "bf_mmla") X(BF_CVT, "bf_cvt")                            \
     X(Z_CMP, "z_cmp") X(Z_DUP_GP, "z_dup_gp") X(Z_CPY_GP, "z_cpy_gp") X(Z_INDEX_IMM, "z_index_imm")                       \
     X(Z_INDEX_GP, "z_index_gp") X(Z_INSR_GP, "z_insr_gp") X(Z_LAST_GP, "z_last_gp") X(Z_LAST_V, "z_last_v")               \
@@ -125,8 +125,9 @@ public:
         { "gp_fp_transfer_extra_cycles", "Cycles a move between a general register and a vector register takes above the latency of the integer unit", "0" },
         { "core_hz", "Core clock, Hz; CNTVCT_EL0 is the cycle count scaled by counter_hz / core_hz", "1000000000" },
         { "timing_classes", "Timing table: one string per class, 'name unit pipe_mask latency issue_interval accumulator_cycles "
-                            "region_out region_in dynamic divide_bits_per_cycle'; unit is int, fp, int_div or fp_div, dynamic is "
-                            "fixed or integer_divide. Empty keeps the latency of each micro-op's functional unit", "[]" },
+                            "region_out region_in dynamic divide_bits_per_cycle vector'; unit is int, fp, int_div or fp_div, dynamic "
+                            "is fixed or integer_divide, vector is 1 for a class whose result goes to a vector pipe's forwarding "
+                            "network. Empty keeps the latency of each micro-op's functional unit", "[]" },
         { "taken_branches_per_cycle", "Predicted-taken branches the front end follows per cycle; 0 is no limit", "0" },
         { "unimplemented_as_nop", "Test aid: decode an instruction the decoder does not implement as a no-op and print "
                                   "its word, instead of a decode fault", "0" })
@@ -308,9 +309,9 @@ protected:
         std::vector<bool> seen(count, false);
         for ( const std::string& row : rows ) {
             char name[64], unit[16], dynamic[32];
-            unsigned mask = 0, latency = 0, interval = 0, accumulator = 0, region_out = 0, region_in = 0, bits = 0;
-            if ( 10 != sscanf(row.c_str(), "%63s %15s %u %u %u %u %u %u %31s %u", name, unit, &mask, &latency, &interval,
-                            &accumulator, &region_out, &region_in, dynamic, &bits) ) {
+            unsigned mask = 0, latency = 0, interval = 0, accumulator = 0, region_out = 0, region_in = 0, bits = 0, vector = 0;
+            if ( 11 != sscanf(row.c_str(), "%63s %15s %u %u %u %u %u %u %31s %u %u", name, unit, &mask, &latency, &interval,
+                            &accumulator, &region_out, &region_in, dynamic, &bits, &vector) ) {
                 output_->fatal(CALL_INFO, -1, "timing_classes: cannot read '%s'\n", row.c_str());
             }
             uint16_t id = count;
@@ -333,7 +334,7 @@ protected:
             else if ( 0 == strcmp(unit, "int_div") ) timing_units_[id] = INST_INT_DIV;
             else if ( 0 == strcmp(unit, "fp_div") ) timing_units_[id] = INST_FP_DIV;
             else output_->fatal(CALL_INFO, -1, "timing_classes: %s: unit '%s'\n", name, unit);
-            r.vector_pipe = timing_units_[id] == INST_FP_ARITH || timing_units_[id] == INST_FP_DIV;
+            r.vector_pipe = vector != 0;
             if ( r.divide_bits_per_cycle == 0 ) output_->fatal(CALL_INFO, -1, "timing_classes: %s: divide_bits_per_cycle 0\n", name);
             seen[id] = true;
         }
@@ -449,6 +450,19 @@ protected:
         return A64Tc::Z_REDUCE_MINMAX;
     }
 
+    // The classes whose micro-ops add their result to the destination they read: the accumulator is that input. An insert
+    // from a general register merges into its destination the same way.
+    static bool accumulatesIntoDestination(const A64Tc c)
+    {
+        switch ( c ) {
+        case A64Tc::V_MLA: case A64Tc::V_ACCUMULATE: case A64Tc::V_DOT: case A64Tc::FP_COMPLEX_MLA: case A64Tc::BF_DOT:
+        case A64Tc::BF_MMLA: case A64Tc::FP_INSERT_FROM_GP: case A64Tc::Z_CPY_GP: case A64Tc::Z_INSR_GP:
+            return true;
+        default:
+            return false;
+        }
+    }
+
     // Gives a micro-op its timing class: the record, and the functional unit whose pipes the record names.
     VanadisArm64Inst* tc(VanadisArm64Inst* i, const A64Tc c)
     {
@@ -457,10 +471,11 @@ protected:
         i->setTiming(&timing_records_[id]);
         i->setUnit(timing_units_[id]);
         i->setAccumulatorCycles(timing_records_[id].accumulator_cycles);
-        // An accumulating vector micro-op reads its destination: that input, the first such, is the accumulator.
-        if ( timing_records_[id].accumulator_cycles > 0 && i->getAccumulatorFPRegIn() == VanadisInstruction::NO_ACCUMULATOR
-             && i->countISAFPRegOut() > 0 ) {
-            for ( uint16_t k = 0; k < i->countISAFPRegIn(); ++k ) {
+        // An accumulating vector micro-op reads its destination: that input, the last such, is the accumulator. The other
+        // classes with accumulator cycles only forward to accumulators (FP multiply) or read the accumulator explicitly.
+        if ( accumulatesIntoDestination(c) && timing_records_[id].accumulator_cycles > 0
+             && i->getAccumulatorFPRegIn() == VanadisInstruction::NO_ACCUMULATOR && i->countISAFPRegOut() > 0 ) {
+            for ( uint16_t k = i->countISAFPRegIn(); k-- > 0; ) {
                 if ( i->getISAFPRegIn(k) == i->getISAFPRegOut(0) ) {
                     i->setAccumulatorFPRegIn(k, timing_records_[id].accumulator_cycles);
                     break;

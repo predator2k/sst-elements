@@ -1030,7 +1030,8 @@ VanadisARM64Decoder::decodeCryptoAes(uint64_t addr, uint32_t ins, VanadisInstruc
     const uint32_t code = opcode - 4;
     auto* i = op(bundle, addr, "AES", INST_FP_ARITH, aes, {}, {},
         code < 2 ? std::vector<uint16_t> { rd, rn } : std::vector<uint16_t> { rn }, { rd });
-    tc(i, A64Tc::CRYPTO_AES);
+    // AESMC and AESIMC fuse with the AESE or AESD before them (section 4.10 of the X925 guide).
+    tc(i, code >= 2 ? A64Tc::CRYPTO_AES_MIX : A64Tc::CRYPTO_AES);
     i->c = code;
     return true;
 }

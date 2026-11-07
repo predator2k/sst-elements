@@ -41,7 +41,8 @@ struct VanadisTimingRecord
     // late forwarding.
     uint16_t accumulator_cycles = 0;
     // Forwarding regions of a vector-pipe micro-op as a producer and as a consumer, one bit per region; a producer and a
-    // consumer that share no region take one more cycle, and a consumer of region 0 takes none.
+    // consumer that share no region take one more cycle, and a consumer of region 0 takes none. Two micro-ops of the
+    // same class forward in the latency of the class.
     uint8_t region_out = 0;
     uint8_t region_in = 0;
     // The micro-op runs in a vector pipe, where the forwarding regions apply.
