@@ -26,6 +26,7 @@
 #include "inst/vstorecond.h"
 
 #include <cassert>
+#include <iterator>
 #include <cinttypes>
 #include <cstdint>
 #include <vector>
@@ -186,6 +187,10 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 }
             }
 
+            for(auto parked_itr = parked_loads_.begin(); parked_itr != parked_loads_.end(); ) {
+                parked_itr = parked_itr->load->getHWThread() == thread ? parked_loads_.erase(parked_itr) : std::next(parked_itr);
+            }
+
             for(auto forwarded_itr = forwarded_loads_.begin(); forwarded_itr != forwarded_loads_.end(); ) {
                 if( forwarded_itr->thread == thread ) {
                     delete forwarded_itr->response;
@@ -273,6 +278,14 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 StandardMem::ReadResp* response = forwarded_loads_.front().response;
                 forwarded_loads_.pop_front();
                 std_mem_handlers_->handle(response);
+            }
+
+            // A parked load is older than what is in the queue. Only stores older than the load can hold it back.
+            for(auto parked_itr = parked_loads_.begin(); parked_itr != parked_loads_.end(); ) {
+                store_sequence_limit_ = parked_itr->store_sequence;
+                const bool sent = sendLoadReq(parked_itr->load);
+                store_sequence_limit_ = NO_STORE_SEQUENCE_LIMIT;
+                parked_itr = sent ? parked_loads_.erase(parked_itr) : std::next(parked_itr);
             }
 
             // this can be called multiple times per cycle
@@ -1180,6 +1193,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 output_->verbose(CALL_INFO, 16, VANADIS_DBG_LSQ_LOAD_FLG, " (ScalarLSQ) -> queue front is store: ins: 0x%" PRI_ADDR " / thr: %" PRIu32 " has issued so will process...\n",
                         new_pending_store->getStoreInstruction()->getInstructionAddress(), new_pending_store->getStoreInstruction()->getHWThread());
                 #endif
+                new_pending_store->setSequence(next_store_sequence_++);
                 stores_pending_[store_ins->getHWThread()].push_back(new_pending_store);
                 stores_pending_size_++;
             }
@@ -1235,8 +1249,15 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                         load_ins->getInstructionAddress(), load_ins->getHWThread());
                     #endif
 
+                    if(loads_pending_.size() + parked_loads_.size() >= max_loads_) return false;
+
                     bool result = sendLoadReq(load_ins);
 
+                    // With forwarding on, a load that must wait for a store steps aside and later operations continue.
+                    if(! result && store_forward_cycles_ > 0 && load_ins->getTransactionType() == MEM_TRANSACTION_NONE) {
+                        parked_loads_.push_back({ load_ins, next_store_sequence_ });
+                        result = true;
+                    }
                     if(result)
                     {
                         // pop front entry and tell the caller we did something (true)
@@ -1535,6 +1556,10 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         {
             bool match_id = false;
 
+            for(const ParkedLoad& parked : parked_loads_) {
+                if(parked.load->getHWThread() == thr) return true;
+            }
+
             for(auto load_itr = loads_pending_.begin(); load_itr != loads_pending_.end(); load_itr++) {
                 if((*load_itr)->getHWThread() == thr) {
                     match_id = true;
@@ -1554,6 +1579,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             const uint32_t thread = load_ins->getHWThread();
             for(auto store_itr = stores_pending_[thread].rbegin(); store_itr != stores_pending_[thread].rend(); ++store_itr) {
                 VanadisBasicStorePendingEntry* store_entry = *store_itr;
+                if(store_entry->getSequence() >= store_sequence_limit_) continue;
                 if(! store_entry->storeAddressOverlaps(address, width)) continue;
 
                 VanadisStoreInstruction* store_ins = store_entry->getStoreInstruction();
@@ -1592,6 +1618,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             for(auto store_itr = stores_pending_[thread].begin(); store_itr != stores_pending_[thread].end(); store_itr++) {
                 VanadisBasicStorePendingEntry* current_entry = (*store_itr);
 
+                if(current_entry->getSequence() >= store_sequence_limit_) break;
                 if(UNLIKELY(current_entry->storeAddressOverlaps(address, width))) {
                     conflicts = true;
                     break;
@@ -1631,6 +1658,17 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             StandardMem::ReadResp* response;
         };
         std::deque<ForwardedLoad> forwarded_loads_;
+
+        // A load that waits for an older store; store_sequence is the sequence of the first store younger than the load.
+        struct ParkedLoad
+        {
+            VanadisLoadInstruction* load;
+            uint64_t store_sequence;
+        };
+        std::deque<ParkedLoad> parked_loads_;
+        uint64_t next_store_sequence_ = 0;
+        static constexpr uint64_t NO_STORE_SEQUENCE_LIMIT = UINT64_MAX;
+        uint64_t store_sequence_limit_ = NO_STORE_SEQUENCE_LIMIT;
         uint64_t current_cycle_ = 0;
 
         uint64_t cache_line_width_ = 64;
