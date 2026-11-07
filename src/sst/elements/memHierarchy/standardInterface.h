@@ -83,6 +83,7 @@ public:
         {"port",        "(string) port name to use for interfacing to the memory system. This must be provided if this subcomponent is being loaded anonymously. Otherwise this should not be specified and either the 'lowlink' port should be connected or the 'lowlink' subcomponent slot should be filled"},
         {"noncacheable_regions", "(string) vector of (start, end) address pairs for noncacheable address ranges. Vector format should be [start0, end0, start1, end1, ...].", "[]"},
         {"tlb_exe_permission", "Parameter is ignored unless 'tlb' slot is used. Determines whether pages should have write/exe  permissions by default. Generally, set to True/1 for an Instruction TLB and False/0 for a Data or unified TLB", "0"},
+        {"physical_address_in_responses", "(bool) A read response carries in pAddr the address the cache answered, which is the physical address when a translator (for example mmu.tlb_wrapper) sits between this interface and the cache; false keeps the address of the request, as before", "false"},
     )
 
     SST_ELI_DOCUMENT_PORTS(
@@ -147,6 +148,8 @@ protected:
 
     SST::MMU_Lib::TLB* tlb_ = nullptr;
     uint32_t default_permissions_ = 0;
+    // physical_address_in_responses.
+    bool physical_address_in_responses_ = false;
 
     class MemEventConverter : public Interfaces::StandardMem::RequestConverter {
     public:

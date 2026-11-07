@@ -96,6 +96,7 @@ class VanadisInstruction
             decode_cycle_         = 0;
             rename_cycle_         = 0;
             element_companion_    = false;
+            refetch_next_after_retire_ = false;
             program_sequence_     = 0;
             end_uop_group_        = false;
             is_front_of_rob_      = false;
@@ -148,6 +149,7 @@ class VanadisInstruction
             decode_cycle_         = copy_me.decode_cycle_;
             rename_cycle_         = copy_me.rename_cycle_;
             element_companion_    = copy_me.element_companion_;
+            refetch_next_after_retire_ = copy_me.refetch_next_after_retire_;
             program_sequence_     = copy_me.program_sequence_;
             end_uop_group_        = copy_me.end_uop_group_;
             is_front_of_rob_      = false;
@@ -508,6 +510,11 @@ class VanadisInstruction
         // predicate leaves to it, and the core counts it neither against the rename width nor against the queue of the LSQ.
         void markElementCompanion() { element_companion_ = true; }
         bool isElementCompanion() const { return element_companion_; }
+        // The micro-op found, when it executed, that values its instruction gave to younger micro-ops were wrong and has
+        // corrected the architectural ones: when it retires, the core discards every younger micro-op and fetches again
+        // from the next instruction (the last micro-op of a first-fault load, first_fault_ffr_predict of the decoder).
+        void markRefetchNextAfterRetire() { refetch_next_after_retire_ = true; }
+        bool refetchesNextAfterRetire() const { return refetch_next_after_retire_; }
         // For the timeline trace: the program sequences of the micro-ops that produced the inputs, recorded at rename.
         static constexpr int TRACE_PRODUCERS = 6;
         uint64_t trace_producer_[TRACE_PRODUCERS] = {};
@@ -589,6 +596,8 @@ class VanadisInstruction
         uint64_t decode_cycle_;
         uint64_t rename_cycle_;
         bool element_companion_;
+        // markRefetchNextAfterRetire.
+        bool refetch_next_after_retire_;
         uint64_t program_sequence_;
         bool end_uop_group_;
         bool is_front_of_rob_;

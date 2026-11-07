@@ -120,6 +120,8 @@ public:
         { "dczid_block_bytes", "Block size DC ZVA zeroes and DCZID_EL0 reports, bytes (a power of two)", "64" },
         { "structure_permute_micro_ops", "With a timing table, a load or store of N-element structures (ASIMD LD2 to LD4, ST2 to ST4; SVE LD2 to LD4, ST2 to ST4) has N permute micro-ops of class v_struct_permute in the vector pipes, the merge of an SVE structure load among them; false is one permute micro-op for ASIMD and an SVE merge of class int_internal", "false" },
         { "sve_store_companions", "With a timing table, the element micro-ops of an SVE contiguous store after the first of each chunk take no rename slot and no place in the queue of the load-store queue; false counts them as other micro-ops", "false" },
+        { "acquire_release_one_way", "Load-Acquire, Load-AcquirePC and Store-Release (LDAR, LDLAR, LDAPR, LDAPUR, LDAXR, LDAXP, STLR, STLLR, STLUR, STLXR, STLXP and the acquire and release forms of CAS, CASP, SWP and the LSE operations) are one load or store micro-op marked acquire, acquire-PC or release, with no fence: the core orders the younger accesses after an acquire load (younger_loads_after_acquire), the LSQ sends a release store only after the older stores of its thread are answered and holds an acquire load behind older release stores (acquire_waits_for_release); false gives each of them a full load-store fence micro-op, as before", "false" },
+        { "first_fault_ffr_predict", "The FFR update of an SVE first-fault or non-fault load assumes that no element after the first faults, so it does not wait for the loaded data; when the data arrives, a last micro-op checks the assumption and, if a load found a fault, corrects the FFR and has the core fetch the following instructions again. false updates the FFR from the fault positions the loads report, as before", "false" },
         { "vector_store_data_micro_ops", "With a timing table, a store of vector registers has a store-data micro-op of class v_store_data that reads the first stored register and writes nothing, so it takes a vector pipe; false is none", "false" },
         { "counter_hz", "Frequency CNTFRQ_EL0 reports and CNTVCT_EL0 counts at, Hz", "1000000000" },
         { "integer_mul_extra_cycles", "Cycles a scalar integer multiply takes above the latency of the integer unit", "0" },
@@ -151,6 +153,8 @@ public:
         structure_permute_micro_ops_ = params.find<bool>("structure_permute_micro_ops", false);
         vector_store_data_micro_ops_ = params.find<bool>("vector_store_data_micro_ops", false);
         sve_store_companions_ = params.find<bool>("sve_store_companions", false);
+        acquire_release_one_way_ = params.find<bool>("acquire_release_one_way", false);
+        first_fault_ffr_predict_ = params.find<bool>("first_fault_ffr_predict", false);
         counter_hz        = params.find<uint64_t>("counter_hz", 1000000000ull);
         integer_mul_extra_cycles = params.find<uint16_t>("integer_mul_extra_cycles", 0);
         fp_mul_extra_cycles      = params.find<uint16_t>("fp_mul_extra_cycles", 0);
@@ -329,6 +333,9 @@ protected:
     bool                         structure_permute_micro_ops_ = false;
     bool                         vector_store_data_micro_ops_ = false;
     bool                         sve_store_companions_ = false;
+    // acquire_release_one_way and first_fault_ffr_predict (the parameters).
+    bool                         acquire_release_one_way_ = false;
+    bool                         first_fault_ffr_predict_ = false;
     uint64_t                     counter_hz;
     uint16_t                     integer_mul_extra_cycles;
     uint16_t                     fp_mul_extra_cycles;
@@ -1226,6 +1233,30 @@ protected:
     {
         add(bundle, new VanadisStoreInstruction(addr, hw_thr, options, base, off, value, bytes, MEM_TRANSACTION_NONE, STORE_FP_REGISTER));
     }
+    // The last micro-op of the bundle is the load of a Load-Acquire (RCsc). Called right after add() of the load: an op() is
+    // pending until the next add() or op(), so it is not yet in the bundle. (From the work package vanadis-s7.)
+    void markAcquireLast(VanadisInstructionBundle* bundle)
+    {
+        VanadisLoadInstruction* load = dynamic_cast<VanadisLoadInstruction*>(bundle->getInstructionByIndex(bundle->getInstructionCount() - 1));
+        if ( load != nullptr ) load->markAcquire();
+    }
+    // The last micro-op of the bundle is the load of a Load-AcquirePC (RCpc).
+    void markAcquirePCLast(VanadisInstructionBundle* bundle)
+    {
+        VanadisLoadInstruction* load = dynamic_cast<VanadisLoadInstruction*>(bundle->getInstructionByIndex(bundle->getInstructionCount() - 1));
+        if ( load != nullptr ) load->markAcquirePC();
+    }
+    // The last micro-op of the bundle is the store of a Store-Release.
+    void markReleaseLast(VanadisInstructionBundle* bundle)
+    {
+        VanadisStoreInstruction* store = dynamic_cast<VanadisStoreInstruction*>(bundle->getInstructionByIndex(bundle->getInstructionCount() - 1));
+        if ( store != nullptr ) store->markRelease();
+    }
+    // The full load-store fence of an acquire or release access, unless acquire_release_one_way.
+    void orderingFence(VanadisInstructionBundle* bundle, uint64_t addr)
+    {
+        if ( ! acquire_release_one_way_ ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+    }
     // The last micro-op of the bundle, the second register of a load pair, issues with the first in one load slot.
     void shareLoadPortWithPrevious(VanadisInstructionBundle* bundle)
     {
@@ -1413,20 +1444,22 @@ protected:
         const uint32_t size = bits(ins, 31, 30), opc = bits(ins, 23, 22), rn = bits(ins, 9, 5), rt = bits(ins, 4, 0);
         const int64_t  off = sext(bits(ins, 20, 12), 9);
         const uint32_t bytes = 1u << size;
-        if ( opc == 0 ) {
-            add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( opc == 0 ) {   // STLUR: a Store-Release
+            orderingFence(bundle, addr);
             storeInt(bundle, addr, rs(rn), off, rz(rt), bytes);
+            markReleaseLast(bundle);
             return true;
         }
         if ( (opc == 2 && size == 3) || (opc == 3 && size >= 2) ) return false;
         const uint16_t target = rt == 31 ? A64Reg::T1 : static_cast<uint16_t>(rt);
-        loadInt(bundle, addr, rs(rn), off, target, bytes, opc >= 2);
+        loadInt(bundle, addr, rs(rn), off, target, bytes, opc >= 2);   // LDAPUR*: a Load-AcquirePC
+        markAcquirePCLast(bundle);
         if ( opc == 3 && rt != 31 ) {
             auto* i = tc(op(bundle, addr, "ZEXT32", INST_INT_ARITH, movReg, { target }, { target }), A64Tc::INT_INTERNAL);
             i->a = 0;
             i->d = HAS_RD;
         }
-        add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        orderingFence(bundle, addr);
         return true;
     }
 
@@ -1506,13 +1539,15 @@ protected:
             }
             if ( L ) {   // LDXR, LDAXR
                 loadInt(bundle, addr, base, 0, target, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
-                if ( o0 ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+                if ( o0 ) markAcquireLast(bundle);
+                if ( o0 ) orderingFence(bundle, addr);
                 return true;
             }
             // STXR, STLXR
-            if ( o0 ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+            if ( o0 ) orderingFence(bundle, addr);
             add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, base, 0, rz(rt),
                 rs_ == 31 ? A64Reg::T2 : static_cast<uint16_t>(rs_), bytes, STORE_INT_REGISTER, 0, 1));
+            if ( o0 ) markReleaseLast(bundle);
             return true;
         }
         if ( o1 ) {
@@ -1521,12 +1556,14 @@ protected:
         }
         if ( L ) {   // LDAR, LDLAR
             loadInt(bundle, addr, base, 0, target, bytes, false);
-            add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+            markAcquireLast(bundle);
+            orderingFence(bundle, addr);
             return true;
         }
         // STLR, STLLR
-        add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        orderingFence(bundle, addr);
         storeInt(bundle, addr, base, 0, rz(rt), bytes);
+        markReleaseLast(bundle);
         return true;
     }
 
@@ -1540,6 +1577,7 @@ protected:
         if ( L ) {
             add(bundle, new VanadisLoadInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0, elem * 2, false,
                 MEM_TRANSACTION_LLSC_LOAD, LOAD_FP_REGISTER));
+            if ( o0 ) markAcquireLast(bundle);   // LDAXP
             std::vector<uint16_t> out = dz(rt);
             for ( auto r : dz(rt2) ) out.push_back(r);
             auto* i = tc(op(bundle, addr, "SPLITPAIR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
@@ -1553,10 +1591,10 @@ protected:
             }, {}, out, { A64Reg::VT0 }), A64Tc::INT_ALU);
             i->c = elem;
             i->a = (rt != 31 ? 1 : 0) | (rt2 != 31 ? 2 : 0);
-            if ( o0 ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+            if ( o0 ) orderingFence(bundle, addr);
             return true;
         }
-        if ( o0 ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( o0 ) orderingFence(bundle, addr);
         auto* i = tc(op(bundle, addr, "JOINPAIR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
             const uint64_t lo = o.X(rf, 0), hi = o.X(rf, 1);
             uint8_t* v = o.Vout(rf, 0);
@@ -1566,6 +1604,7 @@ protected:
         i->c = elem;
         add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0,
             rs_ == 31 ? A64Reg::T2 : static_cast<uint16_t>(rs_), elem * 2, STORE_FP_REGISTER, 0, 1));
+        if ( o0 ) markReleaseLast(bundle);   // STLXP
         return true;
     }
 
@@ -1573,16 +1612,19 @@ protected:
     // succeeded, then replay the instruction if it failed. The branch is the last micro-op of the bundle: a mispredicted
     // branch squashes every younger micro-op, including the ones of its own bundle, so nothing may follow it. Rd keeps
     // its value on a failure because the replay reads it again.
-    void rmwStoreAndRetry(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t base, uint32_t bytes, uint32_t rd, bool acquire)
+    // release marks the store of a release form.
+    void rmwStoreAndRetry(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t base, uint32_t bytes, uint32_t rd, bool acquire,
+        bool release)
     {
         using namespace A64Sem;
         add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, base, 0, A64Reg::T2, A64Reg::T3, bytes,
             STORE_INT_REGISTER, 0, 1));
+        if ( release ) markReleaseLast(bundle);
         if ( rd != 31 ) {
             tc(op(bundle, addr, "RMWRES", INST_INT_ARITH, rmwCommit, { A64Reg::T3, A64Reg::T1, static_cast<uint16_t>(rd) },
                 { static_cast<uint16_t>(rd) }), A64Tc::INT_ALU)->c = bytes;
         }
-        if ( acquire ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( acquire ) orderingFence(bundle, addr);
         add(bundle, new VanadisArm64Branch(addr, hw_thr, options, "RMWRETRY", VanadisArm64BranchKind::CBNZ, 0, 0, true,
             { A64Reg::T3 }, {}));
     }
@@ -1593,10 +1635,11 @@ protected:
         const uint32_t size = bits(ins, 31, 30), rs_ = bits(ins, 20, 16), rn = bits(ins, 9, 5), rt = bits(ins, 4, 0);
         const bool     A = bit(ins, 22), R = bit(ins, 15);
         const uint32_t bytes = 1u << size;
-        if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( R ) orderingFence(bundle, addr);
         loadInt(bundle, addr, rs(rn), 0, A64Reg::T1, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
+        if ( A ) markAcquireLast(bundle);
         tc(op(bundle, addr, "CASVAL", INST_INT_ARITH, casValue, { A64Reg::T1, rz(rs_), rz(rt) }, { A64Reg::T2 }), A64Tc::INT_ATOMIC)->c = bytes;
-        rmwStoreAndRetry(bundle, addr, rs(rn), bytes, rs_, A);
+        rmwStoreAndRetry(bundle, addr, rs(rn), bytes, rs_, A, R);
         return true;
     }
 
@@ -1607,9 +1650,10 @@ protected:
         const bool     sz = bit(ins, 30), A = bit(ins, 22), R = bit(ins, 15);
         if ( bit(ins, 31) || (rs_ & 1) || (rt & 1) || bits(ins, 14, 10) != 31 ) return false;
         const uint32_t elem = sz ? 8 : 4;
-        if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( R ) orderingFence(bundle, addr);
         add(bundle, new VanadisLoadInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0, elem * 2, false,
             MEM_TRANSACTION_LLSC_LOAD, LOAD_FP_REGISTER));
+        if ( A ) markAcquireLast(bundle);
         // New value of the pair in VT1: Rt,Rt+1 when the memory equals Rs,Rs+1, else the memory unchanged.
         auto* i = tc(op(bundle, addr, "CASPVAL", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
             const uint8_t* mem = o.Vin(rf, 0);
@@ -1631,6 +1675,7 @@ protected:
         i->c = elem;
         add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT1, A64Reg::T3,
             elem * 2, STORE_FP_REGISTER, 0, 1));
+        if ( R ) markReleaseLast(bundle);
         // The pair goes to Rs, Rs+1 only when the store succeeded; the branch is the last micro-op (rmwStoreAndRetry).
         std::vector<uint16_t> out = dz(rs_);
         for ( auto r : dz(rs_ + 1) ) out.push_back(r);
@@ -1649,7 +1694,7 @@ protected:
         }, { A64Reg::T3, rz(rs_), rz(rs_ + 1) }, out, { A64Reg::VT0 }), A64Tc::INT_ALU);
         j->c = elem;
         j->a = (rs_ != 31 ? 1 : 0) | (rs_ + 1 != 31 ? 2 : 0);
-        if ( A ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( A ) orderingFence(bundle, addr);
         add(bundle, new VanadisArm64Branch(addr, hw_thr, options, "RMWRETRY", VanadisArm64BranchKind::CBNZ, 0, 0, true,
             { A64Reg::T3 }, {}));
         return true;
@@ -1672,7 +1717,8 @@ protected:
             else if ( opc == 4 && A && !R && rs_ == 31 ) {
                 // LDAPR, LDAPRB, LDAPRH
                 loadInt(bundle, addr, rs(rn), 0, rt == 31 ? A64Reg::T1 : static_cast<uint16_t>(rt), bytes, false);
-                add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+                markAcquirePCLast(bundle);
+                orderingFence(bundle, addr);
                 return true;
             }
             else {
@@ -1682,15 +1728,16 @@ protected:
         else {
             kind = opc;
         }
-        if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        if ( R ) orderingFence(bundle, addr);
         loadInt(bundle, addr, rs(rn), 0, A64Reg::T1, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
+        if ( A ) markAcquireLast(bundle);
         // The operation stands for the time the atomic takes in the cache; a form without a returned value (STADD and the
         // other ST aliases, Rt the zero register) is a class of its own.
         auto* i = tc(op(bundle, addr, "ATOMICOP", INST_INT_ARITH, atomicOp, { A64Reg::T1, rz(rs_) }, { A64Reg::T2 }),
             rt == 31 && kind != 8 ? A64Tc::INT_ATOMIC_NO_RETURN : A64Tc::INT_ATOMIC);
         i->b = kind;
         i->c = bytes;
-        rmwStoreAndRetry(bundle, addr, rs(rn), bytes, rt, A);
+        rmwStoreAndRetry(bundle, addr, rs(rn), bytes, rt, A, R);
         return true;
     }
 
@@ -1738,6 +1785,8 @@ protected:
         uint32_t mbytes, uint16_t base, uint16_t index_reg, uint32_t shift, int64_t imm);
     void sveGather(uint64_t addr, VanadisInstructionBundle* bundle, uint16_t pg, uint16_t zt, uint16_t zm, uint16_t base, uint32_t mode,
         uint32_t shift, int64_t imm, struct A64SveDtype dt, bool ff);
+    // The SVE.FFCHECK micro-op that ends a first-fault or non-fault load under first_fault_ffr_predict.
+    void firstFaultCheck(uint64_t addr, VanadisInstructionBundle* bundle, uint32_t log2_ebytes);
     void sveScatter(uint64_t addr, VanadisInstructionBundle* bundle, uint16_t pg, uint16_t zt, uint16_t zm, uint16_t base, uint32_t mode,
         uint32_t shift, int64_t imm, uint32_t log2_ebytes, uint32_t mbytes);
     bool decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstructionBundle* bundle);

@@ -32,6 +32,8 @@
 #include <cstdint>
 #include <vector>
 #include <queue>
+#include <map>
+#include <set>
 
 using namespace SST::Interfaces;
 
@@ -66,6 +68,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         { "load_new_lines_per_cycle", "Loads per cycle that reach a cache line outside load_line_window. 0 is no limit.", "0"},
         { "store_lines_per_cycle", "Cache lines the stores that go to memory in one cycle may write; a store that straddles two lines may still go first in a cycle. 0 is no limit.", "0"},
         { "free_empty_accesses", "A vector memory micro-op whose elements an earlier micro-op of the instruction covered takes no issue attempt of the cycle; false is the attempt it took before", "false"},
+        { "acquire_waits_for_release", "A Load-Acquire (LDAR, LDLAR, LDAXR, LDAXP, the load of an acquire read-modify-write; not LDAPR or LDAPUR) reads only after every older Store-Release of its thread has been answered (Arm RCsc order); false reads at once, as before (from the work package vanadis-s7)", "false"},
+        { "acquire_after_release_cycles", "With acquire_waits_for_release, cycles a Load-Acquire that found an older Store-Release not yet visible waits after the last Store-Release of its thread was answered", "0"},
                 #ifdef VANADIS_BUILD_DEBUG
                 { "address_mask", "Can mask off address bits if needed during construction of a operation for debug", "0xFFFFFFFFFFFFFFFF"}
                 #endif
@@ -85,7 +89,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                                     { "stores_in_flight", "Count the number of stores which are in-flight", "operations", 1},
                                     { "store_buffer_entries", "Count the number of stores held in the store buffer", "operations", 1},
                                     { "split_stores", "Count the number of stores which are fractured due to cache boundaries", "operations", 1},
-                                    { "split_loads", "Count the number of loads which are fractured due to cache boundaries", "operations", 1})
+                                    { "split_loads", "Count the number of loads which are fractured due to cache boundaries", "operations", 1},
+                                    { "invalidations_received", "Invalidation notices (StandardMem::InvNotify) the memory system sent, for lines the data cache lost", "events", 1})
 
 
         VanadisBasicLoadStoreQueue(ComponentId_t id, Params& params, int coreid, int hwthreads) : VanadisLoadStoreQueue(id, params, coreid, hwthreads),
@@ -98,7 +103,9 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             load_line_window_(params.find<uint32_t>("load_line_window", 0)),
             load_new_lines_per_cycle_(params.find<uint32_t>("load_new_lines_per_cycle", 0)),
             store_lines_per_cycle_(params.find<uint32_t>("store_lines_per_cycle", 0)),
-            free_empty_accesses_(params.find<bool>("free_empty_accesses", false))
+            free_empty_accesses_(params.find<bool>("free_empty_accesses", false)),
+            acquire_waits_for_release_(params.find<bool>("acquire_waits_for_release", false)),
+            acquire_after_release_cycles_(params.find<uint64_t>("acquire_after_release_cycles", 0))
         {
             std_mem_handlers_ = new VanadisBasicLoadStoreQueue::StandardMemHandlers(this, output_);
 
@@ -115,6 +122,9 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             op_q_size_ = 0;
 
             stores_pending_.resize(hw_threads_);
+            stores_in_flight_by_thread_.resize(hw_threads_);
+            release_stores_in_flight_.resize(hw_threads_);
+            last_release_answer_cycle_.assign(hw_threads_, 0);
             stores_pending_index_ = 0;
             stores_pending_size_ = 0;
 
@@ -134,6 +144,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             stat_stores_pending_ = registerStatistic<uint64_t>("stores_in_flight", "1");
             stat_loads_pending_ = registerStatistic<uint64_t>("loads_in_flight", "1");
             stat_op_q_size_ = registerStatistic<uint64_t>("operations_pending");
+            stat_invalidations_ = registerStatistic<uint64_t>("invalidations_received", "1");
         }
 
 
@@ -642,6 +653,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                         if ( load_ins->suppressesFault() ) load_ins->noteSuppressedFault(ev->vAddr);
                         else load_ins->flagError();
                     }
+                    if ( ! ev->getFail() ) load_ins->notePhysicalRead(ev->pAddr, ev->size);
 
                     uint16_t target_reg = 0;
                     uint16_t target_isa_reg = 64;
@@ -782,6 +794,18 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                     delete ev;
                 }
 
+                /*
+                 * An invalidation notice: the data cache lost a line (another agent wrote it, or it was evicted). It
+                 * reaches the core only when the cache has snoop_l1_invalidations.
+                 * Handling: counts it and tells the core the physical address and size of the line. Emits nothing.
+                 */
+                virtual void handle(StandardMem::InvNotify* ev) override
+                {
+                    lsq_->stat_invalidations_->addData(1);
+                    if ( lsq_->invalidation_listener_ ) lsq_->invalidation_listener_(ev->pAddr, ev->size);
+                    delete ev;
+                }
+
                 virtual void handle(StandardMem::WriteResp* ev)
                 {
                     #ifdef VANADIS_BUILD_DEBUG
@@ -796,6 +820,11 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                     if ( iter != lsq_->std_stores_in_flight_.end() ) {
                         lsq_->std_stores_in_flight_.erase(iter);
                         std_store_found = true;
+                        // The store is performed: a Store-Release behind it may go, a Load-Acquire behind a release may read.
+                        for ( auto& stores : lsq_->stores_in_flight_by_thread_ ) stores.erase(ev->getID());
+                        for ( uint32_t t = 0; t < lsq_->release_stores_in_flight_.size(); ++t ) {
+                            if ( lsq_->release_stores_in_flight_[t].erase(ev->getID()) > 0 ) lsq_->last_release_answer_cycle_[t] = lsq_->current_cycle_;
+                        }
                     }
 
                     #ifdef VANADIS_BUILD_DEBUG
@@ -901,6 +930,9 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 #ifdef VANADIS_BUILD_DEBUG
                 output_->verbose(CALL_INFO, 16, VANADIS_DBG_LSQ_STORE_FLG, "--> store-front is not already dispatched so attempt to put into memory system.\n");
                 #endif
+                // A Store-Release goes to memory only after every older store of its thread to another cache line has been
+                // answered; an older store to its own line is ahead of it in the cache's order for that line.
+                if( store_ins->isRelease() && storesInFlightElsewhere(thr, current_store->getStoreAddress(), current_store->getStoreWidth()) ) return false;
                 if( UNLIKELY(store_ins->checkFrontOfROB()) && LIKELY(store_ins->completedIssue()) )
                 {
                     #ifdef VANADIS_BUILD_DEBUG
@@ -1052,7 +1084,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                         false, 0, store_address, store_ins->getInstructionAddress(), store_ins->getHWThread());
                     #endif
 
-                    std_stores_in_flight_.insert(store_req->getID());
+                    noteStoreSent(store_ins, store_req->getID(), store_address);
                     mem_interface_->send(store_req);
 
                     payload.clear();
@@ -1073,7 +1105,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                     #endif
 
                     mem_interface_->send(store_req);
-                    std_stores_in_flight_.insert(store_req->getID());
+                    noteStoreSent(store_ins, store_req->getID(), store_address_right);
 
                     return true;
                 } else {
@@ -1098,7 +1130,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                         false, 0, store_address, store_ins->getInstructionAddress(), store_ins->getHWThread());
                     #endif
 
-                    std_stores_in_flight_.insert(store_req->getID());
+                    noteStoreSent(store_ins, store_req->getID(), store_address);
                     mem_interface_->send(store_req);
 
                     return true;
@@ -1622,6 +1654,16 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 // check to see if loading from this address would conflict with a store which
                 // we have pending, if yes, wait for conflict to clear and then we can proceed
                 const uint64_t memory_sequence = load_ins->getMemorySequence() != 0 ? load_ins->getMemorySequence() : UINT64_MAX;
+                // A Load-Acquire reads only after every older Store-Release of its thread is visible (RCsc).
+                if(acquire_waits_for_release_ && load_ins->isAcquire()) {
+                    if(releasePending(load_ins->getHWThread(), memory_sequence)) {
+                        load_ins->markWaitedForRelease();
+                        return false;
+                    }
+                    if(load_ins->waitedForRelease() && current_cycle_ < last_release_answer_cycle_[load_ins->getHWThread()] + acquire_after_release_cycles_) {
+                        return false;
+                    }
+                }
                 if(UNLIKELY(checkStoreConflict(load_ins->getHWThread(), load_address, load_width, memory_sequence)))
                 {
                     if(store_forward_cycles_ > 0 && forwardStoreToLoad(load_ins, load_address, load_width)) {
@@ -1824,8 +1866,51 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 loads_pending_.push_back(load_entry);
 
                 forwarded_loads_.push_back({ current_cycle_ + store_forward_cycles_, thread, response });
+                load_ins->markReadFromStore();
                 stat_loads_forwarded_->addData(1);
                 return true;
+            }
+            return false;
+        }
+
+        /*
+         * Whether a Load-Acquire of a thread must wait for a Store-Release: an older release store is still in the store
+         * queue, or has gone to memory and is not yet answered (from the work package vanadis-s7).
+         * Handling: memory_sequence is the load's program order among memory operations (the largest value when the core
+         * does not number them); a younger store does not count. Emits nothing.
+         */
+        bool releasePending(const uint32_t thread, const uint64_t memory_sequence) const
+        {
+            if(! release_stores_in_flight_[thread].empty()) return true;
+            for(const VanadisBasicStorePendingEntry* entry : stores_pending_[thread]) {
+                const VanadisStoreInstruction* store = const_cast<VanadisBasicStorePendingEntry*>(entry)->getStoreInstruction();
+                if(store->getMemorySequence() > memory_sequence) break;
+                if(store->isRelease()) return true;
+            }
+            return false;
+        }
+
+        /*
+         * Records a plain store that went to memory: in the in-flight set of its thread, and of the release stores if it is
+         * one. Handling: request is the identifier of the write. Emits nothing.
+         */
+        void noteStoreSent(const VanadisStoreInstruction* store_ins, const StandardMem::Request::id_t request, const uint64_t address)
+        {
+            std_stores_in_flight_.insert(request);
+            stores_in_flight_by_thread_[store_ins->getHWThread()][request] = address / cache_line_width_;
+            if(store_ins->isRelease()) release_stores_in_flight_[store_ins->getHWThread()].insert(request);
+        }
+
+        /*
+         * Whether a thread has a plain store in flight to a cache line outside [address, address + width).
+         * Handling: compares cache line numbers. Emits nothing.
+         */
+        bool storesInFlightElsewhere(const uint32_t thread, const uint64_t address, const uint64_t width) const
+        {
+            const uint64_t first = address / cache_line_width_;
+            const uint64_t last = (address + (width > 0 ? width : 1) - 1) / cache_line_width_;
+            for(const auto& entry : stores_in_flight_by_thread_[thread]) {
+                if(entry.second < first || entry.second > last) return true;
             }
             return false;
         }
@@ -1855,6 +1940,14 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         std::vector< std::deque<VanadisBasicStorePendingEntry*> > stores_pending_;
         std::deque<VanadisBasicLoadPendingEntry*> loads_pending_;
         std::set<StandardMem::Request::id_t> std_stores_in_flight_;
+        // Per thread: the plain stores that went to memory and are not answered yet, with the cache line each writes, and
+        // the Store-Releases among them; the cycle the last Store-Release of the thread was answered.
+        std::vector< std::map<StandardMem::Request::id_t, uint64_t> > stores_in_flight_by_thread_;
+        std::vector< std::set<StandardMem::Request::id_t> > release_stores_in_flight_;
+        std::vector<uint64_t> last_release_answer_cycle_;
+        // acquire_waits_for_release, acquire_after_release_cycles.
+        const bool acquire_waits_for_release_;
+        const uint64_t acquire_after_release_cycles_;
         int op_q_index_; // Next hw_thread to check in op_q queues
         int stores_pending_index_; // Next hw thread to check in stores_pending q's
         size_t op_q_size_; // Total number of loads and stores in all threads' op_q_ queues
@@ -1920,6 +2013,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         uint64_t address_mask_ = 0xFFFFFFFFFFFFFFFFULL; // Only used in VANADIS_BUILD_DEBUG library
 
         Statistic<uint64_t>* stat_store_buffer_entries_;
+        Statistic<uint64_t>* stat_invalidations_;
         Statistic<uint64_t>* stat_loads_forwarded_;
         Statistic<uint64_t>* stat_op_q_size_;
         Statistic<uint64_t>* stat_stores_pending_;

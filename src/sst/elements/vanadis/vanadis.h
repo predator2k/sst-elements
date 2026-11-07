@@ -136,6 +136,7 @@ public:
         { "recover_at_execute", "With rename_at_dispatch, a mispredicted branch squashes the younger instructions when it executes, and the older ones go on; false squashes at retire", "false"},
         { "retire_instructions_per_cycle", "Instructions (micro-op groups) retired per cycle; the micro-ops of a group do not count against retires_per_cycle. 0 counts micro-ops against retires_per_cycle as upstream", "0"},
         { "stores_out_of_order", "With stores_pass_loads, a plain store also issues ahead of older plain stores that have not issued (its address registers are ready first); the load-store queue keeps its stores in program order. False keeps stores in program order at issue", "false"},
+        { "younger_loads_after_acquire", "With rename_at_dispatch, the order of the loads of a thread that are younger than a Load-Acquire or Load-AcquirePC of that thread which has not completed (the decoder marks them, acquire_release_one_way): unchecked adds no order of its own, as before (the fences of the decoder give it); wait holds them, and every younger ordered memory operation, until the acquire load has its data; speculate lets them read, and an invalidation notice of the data cache (snoop_l1_invalidations of memHierarchy, physical_address_in_responses of the memory interface) for a line one of them read squashes it and fetches its instruction again", "unchecked"},
         { "stores_pass_loads", "With rename_at_dispatch, a plain store issues to the load-store queue ahead of older plain loads that have not issued, when the store buffer has room for it; false waits for every older memory operation", "false"},
         { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },
@@ -180,6 +181,8 @@ public:
         { "instructions_decoded", "Number of instructions decoded", "instructions", 1 },
         { "branch_mispredicts", "Number of retired branches which were mis-predicted", "instructions", 1 },
         { "memory_order_violations", "Loads that read before an older store knew its address", "events", 1 },
+        { "acquire_order_violations", "Loads squashed because a line they read before an older Load-Acquire of their thread completed was invalidated (younger_loads_after_acquire speculate)", "events", 1 },
+        { "first_fault_refetches", "First-fault or non-fault loads whose predicted FFR a fault proved wrong, after which the following instructions were fetched again (first_fault_ffr_predict of the decoder)", "events", 1 },
         { "branches", "Number of retired branches", "instructions", 1 },
         { "loads_issued", "Number of load instructions issued to the LSQ", "instructions", 1 },
         { "stores_issued", "Number of store instructions issued to the LSQ", "instructions", 1 },
@@ -355,6 +358,20 @@ private:
     static constexpr int UNISSUED_LOAD = 1;
     static constexpr int UNISSUED_STORE = 2;
     static constexpr int UNISSUED_ORDERED = 4;
+    // younger_loads_after_acquire wait: an older Load-Acquire of the thread has not completed.
+    static constexpr int INCOMPLETE_ACQUIRE = 8;
+
+    // younger_loads_after_acquire.
+    enum class YoungerLoadsAfterAcquire { UNCHECKED, WAIT, SPECULATE };
+    YoungerLoadsAfterAcquire younger_loads_after_acquire = YoungerLoadsAfterAcquire::UNCHECKED;
+    // Whether ins is a load that orders the younger accesses of its thread and has not completed.
+    static bool incompleteAcquire(const VanadisInstruction* ins);
+    // younger_loads_after_acquire speculate: the data cache lost the line at address (physical, size bytes); a load younger
+    // than an incomplete acquire load of its thread that read the line is squashed.
+    void onLineInvalidated(uint64_t address, uint64_t size);
+    // Per thread: the program sequence of the first micro-op of the oldest instruction whose load onLineInvalidated
+    // caught, 0 for none.
+    std::vector<uint64_t> acquire_violation_sequence;
 
     uint64_t issue_stage_cycle = 0;
     // accumulator_alternate: the program sequence of the last micro-op of such a class that was renamed (0 is none), and
@@ -437,6 +454,8 @@ private:
     Statistic<uint64_t>* stat_stores_issued = nullptr;
     Statistic<uint64_t>* stat_branch_mispredicts = nullptr;
     Statistic<uint64_t>* stat_order_violations = nullptr;
+    Statistic<uint64_t>* stat_acquire_order_violations = nullptr;
+    Statistic<uint64_t>* stat_first_fault_refetches = nullptr;
     Statistic<uint64_t>* stat_branches = nullptr;
     Statistic<uint64_t>* stat_cycles = nullptr;
     Statistic<uint64_t>* stat_rob_entries = nullptr;

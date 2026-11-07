@@ -219,8 +219,49 @@ public:
     bool sharesLoadPort() const { return shares_load_port_; }
     void markSharesLoadPort() { shares_load_port_ = true; }
 
+    // A Load-Acquire with RCsc order (LDAR, LDLAR, LDAXR, LDAXP, the load of an acquire read-modify-write; not LDAPR): it
+    // does not read before every older Store-Release of its thread is visible (acquire_waits_for_release of the LSQ).
+    // The marks of this and the next pair of methods come from the work package vanadis-s7 (fork commit 0413e57b5).
+    bool isAcquire() const { return acquire_; }
+    void markAcquire() { acquire_ = true; }
+    // A Load-AcquirePC (LDAPR, LDAPUR; RCpc order): it orders the younger accesses of its thread as a Load-Acquire does,
+    // but need not wait for older Store-Releases.
+    bool isAcquirePC() const { return acquire_pc_; }
+    void markAcquirePC() { acquire_pc_ = true; }
+    // Either kind: no younger access of the thread may read memory before this load (younger_loads_after_acquire of the core).
+    bool ordersYoungerAccesses() const { return acquire_ || acquire_pc_; }
+    // The Load-Acquire found an older Store-Release not yet visible (acquire_after_release_cycles of the LSQ).
+    void markWaitedForRelease() { waited_for_release_ = true; }
+    bool waitedForRelease() const { return waited_for_release_; }
+
+    // The physical range [low, high) of the bytes the load read from memory, from the addresses of its answers when the
+    // memory interface reports them (physical_address_in_responses of memHierarchy.standardInterface); high is 0 until an
+    // answer has arrived. A load that took its bytes from a store records nothing.
+    void notePhysicalRead(const uint64_t address, const uint64_t size)
+    {
+        if ( size == 0 || read_from_store_ ) return;
+        if ( phys_read_high_ == 0 || address < phys_read_low_ ) phys_read_low_ = address;
+        if ( address + size > phys_read_high_ ) phys_read_high_ = address + size;
+    }
+    // The load took its bytes from an older store of its thread: its answer carries no address of the memory system.
+    void markReadFromStore() { read_from_store_ = true; }
+    bool readPhysicalLine(const uint64_t line_address, const uint64_t line_bytes) const
+    {
+        return phys_read_high_ != 0 && phys_read_low_ < line_address + line_bytes && line_address < phys_read_high_;
+    }
+
 protected:
     bool shares_load_port_ = false;
+    // markAcquire, markAcquirePC.
+    bool acquire_ = false;
+    bool acquire_pc_ = false;
+    // markWaitedForRelease.
+    bool waited_for_release_ = false;
+    // markReadFromStore.
+    bool read_from_store_ = false;
+    // notePhysicalRead.
+    uint64_t phys_read_low_ = 0;
+    uint64_t phys_read_high_ = 0;
 
     uint64_t access_address = 0;
     uint64_t access_width = 0;

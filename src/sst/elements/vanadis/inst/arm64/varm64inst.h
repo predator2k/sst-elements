@@ -177,6 +177,12 @@ public:
     {
         return rf->fpRegBytes(phys_fp_regs_out[pos]);
     }
+    // The register of FP source pos, writable: only for SVE.FFCHECK, which corrects the FFR that an earlier micro-op of its
+    // own instruction wrote; every younger reader of that register is discarded when SVE.FFCHECK retires.
+    uint8_t* VinWritable(VanadisRegisterFile* rf, uint16_t pos)
+    {
+        return rf->fpRegBytes(phys_fp_regs_in[pos]);
+    }
 
     // Payload of the semantic function; its meaning belongs to that function.
     uint64_t imm  = 0;

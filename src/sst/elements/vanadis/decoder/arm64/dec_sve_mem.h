@@ -93,7 +93,9 @@ VanadisARM64Decoder::sveContigLoad(uint64_t addr, VanadisInstructionBundle* bund
         if ( nreg > 1 ) occupyStructPermute(bundle, addr, { A64Reg::VT0 }, nreg - 1);
         return;
     }
-    // T0 = the base address; T3 is the first-fault chain.
+    // T0 = the base address; T3 is the first-fault chain. With first_fault_ffr_predict the FFR update reads T3 straight
+    // from SVE.FFINIT (no fault after the first element) and the loads carry their fault positions in T4 to SVE.FFCHECK.
+    const uint16_t chain = first_fault_ffr_predict_ ? A64Reg::T4 : A64Reg::T3;
     auto* b = op(bundle, addr, "SVE.BASE", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
         uint64_t a = o.X(rf, 0);
         if ( o.d ) a += o.X(rf, 1) << o.c;
@@ -104,10 +106,11 @@ VanadisARM64Decoder::sveContigLoad(uint64_t addr, VanadisInstructionBundle* bund
     b->d = index_reg != 0xFFFF;
     b->imm = static_cast<uint64_t>(imm);
     tc(op(bundle, addr, "SVE.FFINIT", INST_INT_ARITH, A64Sem::movImm, {}, { A64Reg::T3 }), A64Tc::INT_INTERNAL)->imm = ~0ull;
+    if ( first_fault_ffr_predict_ ) tc(op(bundle, addr, "SVE.FFINIT", INST_INT_ARITH, A64Sem::movImm, {}, { chain }), A64Tc::INT_INTERNAL)->imm = ~0ull;
     for ( uint32_t c = 0; c < image; c += chunk ) {
         uint32_t length = 0;
         for ( uint32_t part = 1; part <= 2; ++part ) {
-            auto* l = new VanadisArm64VecLoad(addr, hw_thr, options, contigLoadResolve, { A64Reg::T0, A64Reg::T3 }, { A64Reg::T3 }, { pg },
+            auto* l = new VanadisArm64VecLoad(addr, hw_thr, options, contigLoadResolve, { A64Reg::T0, chain }, { chain }, { pg },
                 part == 1 ? A64Reg::VT0 : A64Reg::VT1);
             fill_payload(l->m, c);
             l->m.imm = 0;
@@ -131,6 +134,16 @@ VanadisARM64Decoder::sveContigLoad(uint64_t addr, VanadisInstructionBundle* bund
     auto* u = op(bundle, addr, "SVE.FFR", INST_FP_ARITH, ffrUpdate, { A64Reg::T3 }, {}, { A64Reg::FFR }, { A64Reg::FFR });
     tc(u, A64Tc::INT_INTERNAL);
     u->a = dt.log2_ebytes;
+    if ( first_fault_ffr_predict_ ) firstFaultCheck(addr, bundle, dt.log2_ebytes);
+}
+
+inline void
+VanadisARM64Decoder::firstFaultCheck(uint64_t addr, VanadisInstructionBundle* bundle, uint32_t log2_ebytes)
+{
+    // The last micro-op: the fault position the loads found (T4) against the FFR the prediction gave.
+    auto* k = op(bundle, addr, "SVE.FFCHECK", INST_FP_ARITH, A64SveMem::ffrCheck, { A64Reg::T4 }, {}, { A64Reg::FFR }, {});
+    tc(k, A64Tc::INT_INTERNAL);
+    k->a = log2_ebytes;
 }
 
 inline void
@@ -187,11 +200,14 @@ VanadisARM64Decoder::sveGather(uint64_t addr, VanadisInstructionBundle* bundle, 
 {
     using namespace A64SveMem;
     const uint32_t elements = vector_bytes >> dt.log2_ebytes;
+    // With first_fault_ffr_predict the loads carry their fault positions in T4 (as in sveContigLoad).
+    const uint16_t chain = first_fault_ffr_predict_ ? A64Reg::T4 : A64Reg::T3;
     if ( ff ) tc(op(bundle, addr, "SVE.FFINIT", INST_INT_ARITH, A64Sem::movImm, {}, { A64Reg::T3 }), A64Tc::INT_INTERNAL)->imm = ~0ull;
+    if ( ff && first_fault_ffr_predict_ ) tc(op(bundle, addr, "SVE.FFINIT", INST_INT_ARITH, A64Sem::movImm, {}, { chain }), A64Tc::INT_INTERNAL)->imm = ~0ull;
     for ( uint32_t e = 0; e < elements; ++e ) {
         auto* l = new VanadisArm64VecLoad(addr, hw_thr, options, gatherResolve,
-            ff ? std::vector<uint16_t> { base, A64Reg::T3 } : std::vector<uint16_t> { base },
-            ff ? std::vector<uint16_t> { A64Reg::T3 } : std::vector<uint16_t> {}, { pg, zm }, A64Reg::VT0);
+            ff ? std::vector<uint16_t> { base, chain } : std::vector<uint16_t> { base },
+            ff ? std::vector<uint16_t> { chain } : std::vector<uint16_t> {}, { pg, zm }, A64Reg::VT0);
         l->m.imm = imm;
         l->m.log2_ebytes = dt.log2_ebytes;
         l->m.mbytes = dt.mbytes;
@@ -215,6 +231,7 @@ VanadisARM64Decoder::sveGather(uint64_t addr, VanadisInstructionBundle* bundle, 
         auto* u = op(bundle, addr, "SVE.FFR", INST_FP_ARITH, ffrUpdate, { A64Reg::T3 }, {}, { A64Reg::FFR }, { A64Reg::FFR });
         tc(u, A64Tc::INT_INTERNAL);
         u->a = dt.log2_ebytes;
+        if ( first_fault_ffr_predict_ ) firstFaultCheck(addr, bundle, dt.log2_ebytes);
     }
 }
 

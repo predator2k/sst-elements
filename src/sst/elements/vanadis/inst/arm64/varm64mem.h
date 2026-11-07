@@ -556,6 +556,26 @@ ffrUpdate(VanadisArm64Inst& op, VanadisRegisterFile* rf)
     writeP(op, rf, r);
 }
 
+// SVE.FFCHECK under first_fault_ffr_predict: X0 is the lowest fault position (elements) the loads of the instruction
+// found, ~0 for none; FP source 0 is the FFR the instruction's SVE.FFR wrote on the prediction that no element after the
+// first faults. A fault clears that FFR from the position on, in place, and asks the core to fetch the next instruction
+// again when this micro-op retires. a = log2 element bytes.
+inline void
+ffrCheck(VanadisArm64Inst& op, VanadisRegisterFile* rf)
+{
+    const unsigned vl = vlOf(rf);
+    const uint32_t ebytes = 1u << op.a;
+    const uint64_t pos = op.X(rf, 0);
+    if ( pos >= vl / ebytes ) return;
+    uint8_t* r = op.VinWritable(rf, 0);
+    bool changed = false;
+    for ( uint64_t b = pos * ebytes; b < vl; ++b ) {
+        if ( r[b / 8] & (1u << (b % 8)) ) changed = true;
+        r[b / 8] = static_cast<uint8_t>(r[b / 8] & ~(1u << (b % 8)));
+    }
+    if ( changed ) op.markRefetchNextAfterRetire();
+}
+
 } // namespace A64SveMem
 } // namespace Vanadis
 } // namespace SST

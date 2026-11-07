@@ -90,6 +90,8 @@ StandardInterface::StandardInterface(SST::ComponentId_t id, Params &params, Time
     base_addr_mask_ = 0;
     line_size_ = 0;
 
+    physical_address_in_responses_ = params.find<bool>("physical_address_in_responses", false);
+
     std::vector<uint64_t> noncache;
     params.find_array<uint64_t>("noncacheable_regions", noncache);
 
@@ -944,6 +946,9 @@ StandardMem::Request* StandardInterface::convertResponseGetSResp(StandardMem::Re
     if (!me->success()) {
         resp->setFail();
     }
+    if (physical_address_in_responses_) {
+        resp->pAddr = me->getAddr();
+    }
     return resp;
 }
 
@@ -1121,6 +1126,7 @@ void StandardInterface::serialize_order(SST::Core::Serialization::serializer& se
     SST_SER(endpoint_type_);
 
     SST_SER(noncacheable_regions_);
+    SST_SER(physical_address_in_responses_);
 
     SST_SER(recv_handler_);
     SST_SER(converter_);

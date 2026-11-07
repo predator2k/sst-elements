@@ -91,6 +91,9 @@ public:
 
     // Told the address of each store when it becomes known.
     void setStoreAddressListener(std::function<void(const VanadisInstruction*, uint64_t, uint64_t)> listener) { store_address_listener_ = std::move(listener); }
+    // Told each invalidation notice of the memory system: the physical address and size of the line the data cache lost
+    // (younger_loads_after_acquire speculate of the core).
+    void setInvalidationListener(std::function<void(uint64_t, uint64_t)> listener) { invalidation_listener_ = std::move(listener); }
 
     void setCoreId( int core ) { core_id_ = core; }
     int getCoreId( ) { return core_id_; }
@@ -183,6 +186,7 @@ protected:
     std::vector<VanadisRegisterFile*>* register_files_;
     std::function<bool(const VanadisInstruction*)> store_data_ready_;
     std::function<void(const VanadisInstruction*, uint64_t, uint64_t)> store_address_listener_;
+    std::function<void(uint64_t, uint64_t)> invalidation_listener_;
     SST::Output* output_;
 };
 

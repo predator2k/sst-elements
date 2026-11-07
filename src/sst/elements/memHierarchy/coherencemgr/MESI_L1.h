@@ -59,6 +59,7 @@ public:
         {"eventSent_WriteResp",     "Number of WriteResp responses sent", "events", 2},
         {"eventSent_PutS",          "Number of PutS requests sent", "events", 2},
         {"eventSent_PutE",          "Number of PutE requests sent", "events", 2},
+        {"eventSent_Inv",           "Number of Inv notices sent to the processor (snoop_l1_invalidations)", "events", 2},
         {"eventSent_PutM",          "Number of PutM requests sent", "events", 2},
         {"eventSent_FetchResp",     "Number of FetchResp requests sent", "events", 2},
         {"eventSent_FetchXResp",    "Number of FetchXResp requests sent", "events", 2},

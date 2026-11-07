@@ -84,6 +84,12 @@ public:
     bool sharesStorePort() const { return shares_store_port_; }
     void markSharesStorePort() { shares_store_port_ = true; }
 
+    // A Store-Release (STLR, STLLR, STLUR, STLXR, STLXP, the store of a release read-modify-write): it goes to memory only
+    // after every older store of its thread has been answered, and a younger Load-Acquire waits until it is visible (the
+    // mark comes from the work package vanadis-s7, fork commit 0413e57b5).
+    bool isRelease() const { return release_; }
+    void markRelease() { release_ = true; }
+
     // A plain store of one register reads its data register when it goes to memory, and a load may take its bytes.
     virtual bool forwardsDataToLoads() const { return MEM_TRANSACTION_NONE == memAccessType; }
 
@@ -213,6 +219,8 @@ public:
 
 protected:
     bool shares_store_port_ = false;
+    // markRelease.
+    bool release_ = false;
 
     const int64_t            offset;
     const uint16_t           store_width;
