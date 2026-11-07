@@ -365,6 +365,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
 
     fetches_per_cycle = params.find<uint32_t>("fetches_per_cycle", 2);
     decodes_per_cycle = params.find<uint32_t>("decodes_per_cycle", 2);
+    renames_per_cycle = params.find<uint32_t>("renames_per_cycle", decodes_per_cycle);
     issues_per_cycle  = params.find<uint32_t>("issues_per_cycle", 2);
     retires_per_cycle = params.find<uint32_t>("retires_per_cycle", 2);
 
@@ -512,7 +513,7 @@ VanadisCore::performRename(const uint32_t hw_thr)
     VanadisCircularQueue<VanadisInstruction*>* thr_rob = rob[hw_thr];
     const size_t rob_size = thr_rob->size();
 
-    for ( uint32_t done = 0; done < decodes_per_cycle && renamed_in_rob[hw_thr] < rob_size; ++done ) {
+    for ( uint32_t done = 0; done < renames_per_cycle && renamed_in_rob[hw_thr] < rob_size; ++done ) {
         VanadisInstruction* ins = thr_rob->peekAt(renamed_in_rob[hw_thr]);
 
         // A system call takes the current mappings and pops nothing.
@@ -1329,6 +1330,8 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
         else {
             if ( ! rob_front->checkFrontOfROB() ) {
                 rob_front->markFrontOfROB();
+                // A store at the front goes to memory in this retire stage, so several can retire per cycle.
+                if ( rename_at_dispatch && INST_STORE == rob_front->getInstFuncType() ) lsq->commitFrontStore(rob_num);
             } else {
                 // Return 2 because instruction is front of ROB but has not executed and
                 // so we cannot make progress any more this cycle

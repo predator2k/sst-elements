@@ -57,6 +57,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 { "max_stores", "Set the maximum number of stores permitted in the queue", "8" },
                 { "max_loads", "Set the maximum number of loads permitted in the queue", "16" },
                 { "issues_per_cycle", "Maximum number of issues the LSQ can attempt per cycle.", "2"},
+        { "stores_per_cycle", "Stores that can go to memory per cycle.", "1"},
         { "store_forward_cycles", "Cycles from the issue of a load to its data when an older store holds all of its bytes. 0 makes the load wait until the store has gone to memory.", "0"},
                 #ifdef VANADIS_BUILD_DEBUG
                 { "address_mask", "Can mask off address bits if needed during construction of a operation for debug", "0xFFFFFFFFFFFFFFFF"}
@@ -84,6 +85,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             max_stores_(params.find<size_t>("max_stores", 8)),
             max_loads_(params.find<size_t>("max_loads", 16)),
             max_issue_attempts_per_cycle_(params.find("issues_per_cycle", 2)),
+            stores_per_cycle_(params.find<uint32_t>("stores_per_cycle", 1)),
             store_forward_cycles_(params.find<uint64_t>("store_forward_cycles", 0))
         {
             std_mem_handlers_ = new VanadisBasicLoadStoreQueue::StandardMemHandlers(this, output_);
@@ -283,11 +285,16 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             }
 
             // attempt to issue any front of ROB stores into memory system
-            for (int i = 0; i < hw_threads_; i++) {
-                bool issued = issueStoreFront(stores_pending_index_);
+            for (int i = 0; i < hw_threads_ && stores_this_cycle_ < stores_per_cycle_; i++) {
+                if (issueStoreFront(stores_pending_index_)) stores_this_cycle_++;
                 stores_pending_index_ = (stores_pending_index_ + 1) % hw_threads_;
-                if (issued) break; // one per cycle TODO: parameterize
             }
+            stores_this_cycle_ = 0;
+        }
+
+        void commitFrontStore(const uint32_t thread) override
+        {
+            if (stores_this_cycle_ < stores_per_cycle_ && issueStoreFront(thread)) stores_this_cycle_++;
         }
 
     protected:
@@ -1612,7 +1619,9 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         const size_t max_stores_;
         const size_t max_loads_;
         const uint32_t max_issue_attempts_per_cycle_;
+        const uint32_t stores_per_cycle_;
         const uint64_t store_forward_cycles_;
+        uint32_t stores_this_cycle_ = 0;
 
         // A load that took its bytes from a store: its response, delivered at ready_cycle.
         struct ForwardedLoad

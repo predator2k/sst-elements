@@ -124,6 +124,7 @@ public:
         { "clock", "Core clock frequency", "1GHz" },
         { "reorder_slots", "Number of slots in the reorder buffer", "64"},
         { "misprediction_extra_cycles", "Cycles decode waits after a branch misprediction, above the time the flush takes", "0"},
+        { "renames_per_cycle", "With rename_at_dispatch, micro-ops renamed per cycle", "decodes_per_cycle"},
         { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },
         { "physical_fp_registers", "Number of physical floating point registers per hardware thread", "128" },
@@ -238,7 +239,7 @@ private:
     void performFetch(const uint64_t cycle);
     void performDecode(const uint64_t cycle);
 
-    // rename_at_dispatch: rename the instructions that entered the reorder buffer, oldest first, up to decodes_per_cycle.
+    // rename_at_dispatch: rename the instructions that entered the reorder buffer, oldest first, up to renames_per_cycle.
     void performRename(const uint32_t hw_thr);
     // rename_at_dispatch: issue the oldest renamed instruction that can issue. Returns 0 if one issued, otherwise 1.
     int performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t& rob_start, int& unallocated_memory_op_seen);
@@ -310,6 +311,7 @@ private:
     std::vector<VanadisInstruction*> int_phys_reg_producer;
     std::vector<VanadisInstruction*> fp_phys_reg_producer;
     std::vector<size_t> renamed_in_rob;
+    uint32_t renames_per_cycle = 0;
     uint64_t misprediction_extra_cycles = 0;
     std::vector<uint64_t> decode_resume_cycle;
 

@@ -108,6 +108,8 @@ public:
     virtual void push(VanadisFenceInstruction* fence) = 0;
 
     virtual void tick(uint64_t cycle) = 0;
+    // The store at the front of the reorder buffer goes to memory now, if the stores per cycle allow it.
+    virtual void commitFrontStore(const uint32_t thread) {}
     virtual void clearLSQByThreadID(const uint32_t thread) = 0;
 
     virtual void init(unsigned int phase) = 0;
