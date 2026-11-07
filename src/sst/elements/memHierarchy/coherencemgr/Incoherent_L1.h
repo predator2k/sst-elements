@@ -191,6 +191,7 @@ private:
     CacheArray<L1CacheLine>* cache_array_ = nullptr;
 
     Cycle_t llsc_block_cycles_;
+    bool write_miss_no_fetch_ = false;   // yasai HW-3 patch
 
     /* Statistics */
     Statistic<uint64_t>* stat_latency_GetS_[2]  = {nullptr, nullptr};

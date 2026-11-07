@@ -152,6 +152,7 @@ void Cache::createCoherenceManager(Params &params) {
     coherenceParams.insert("inclusive", inclusive); // Not used by all managers
     coherenceParams.insert("snoop_l1_invalidations", params.find<std::string>("snoop_l1_invalidations", "false")); // Not used by all managers
     coherenceParams.insert("llsc_block_cycles", params.find<std::string>("llsc_block_cycles", "0")); // Not used by all managers
+    coherenceParams.insert("write_miss_no_fetch", params.find<std::string>("write_miss_no_fetch", "false")); // yasai HW-3 patch, incoherent_l1 only
     coherenceParams.insert("request_link_width", params.find<std::string>("request_link_width", "0B"));
     coherenceParams.insert("response_link_width", params.find<std::string>("response_link_width", "0B"));
     coherenceParams.insert("min_packet_size", params.find<std::string>("min_packet_size", "8B"));

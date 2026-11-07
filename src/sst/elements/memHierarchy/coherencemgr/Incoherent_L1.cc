@@ -50,6 +50,9 @@ IncoherentL1::IncoherentL1(ComponentId_t id, Params& params, Params& owner_param
     cache_array_->setBanked(params.find<uint64_t>("banks", 0));
 
     llsc_block_cycles_ = params.find<Cycle_t>("llsc_block_cycles", 0);
+    // yasai HW-3 patch: with write_miss_no_fetch a write miss allocates the line dirty without fetching it
+    // (a GPU L2 keeps per-byte masks of written sectors and does not read memory for a write miss).
+    write_miss_no_fetch_ = params.find<bool>("write_miss_no_fetch", false);
 
     stat_event_state_[(int)Command::GetS][I] =            registerStatistic<uint64_t>("stateEvent_GetS_I");
     stat_event_state_[(int)Command::GetS][E] =            registerStatistic<uint64_t>("stateEvent_GetS_E");
@@ -266,6 +269,15 @@ bool IncoherentL1::handleGetX(MemEvent* event, bool in_mshr) {
                     mshr_->setProfiled(addr);
                 }
 
+                // yasai HW-3 patch: allocate without fetch (see the constructor)
+                if (write_miss_no_fetch_ && !event->isStoreConditional() && !event->queryFlag(MemEvent::F_LOCKED)) {
+                    line->setState(M);
+                    line->setData(event->getPayload(), event->getAddr() - event->getBaseAddr());
+                    send_time = sendResponseUp(event, nullptr, true, line->getTimestamp(), true);
+                    line->setTimestamp(send_time-1);
+                    cleanUpAfterRequest(event, true);
+                    break;
+                }
                 // Handle
                 send_time = forwardMessage(event, line_size_, 0, nullptr, Command::GetX);
                 line->setState(IM);
