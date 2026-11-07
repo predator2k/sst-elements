@@ -525,6 +525,16 @@ casValue(VanadisArm64Inst& op, VanadisRegisterFile* rf)
     op.setX(rf, 0, (mem == (op.X(rf, 1) & mask)) ? (op.X(rf, 2) & mask) : mem);
 }
 
+// The result of a read-modify-write: sources are the store-conditional status, the loaded value and the old Rd. A
+// failed store leaves Rd as it was.
+inline void
+rmwCommit(VanadisArm64Inst& op, VanadisRegisterFile* rf)
+{
+    const unsigned bits = op.c * 8;
+    const uint64_t mask = bits == 64 ? ~0ull : ((1ull << bits) - 1);
+    op.setX(rf, 0, op.X(rf, 0) == 0 ? (op.X(rf, 1) & mask) : op.X(rf, 2));
+}
+
 // A loaded value masked to its width and written to a register (the LSE result in Rs or Rt).
 inline void
 zeroExtendTo(VanadisArm64Inst& op, VanadisRegisterFile* rf)

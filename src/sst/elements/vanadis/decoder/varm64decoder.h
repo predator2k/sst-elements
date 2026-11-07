@@ -1147,11 +1147,20 @@ protected:
         return true;
     }
 
-    // The tail of a read-modify-write: store T2 conditionally, replay the instruction if it failed.
-    void rmwStoreAndRetry(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t base, uint32_t bytes)
+    // The tail of a read-modify-write: store T2 conditionally, write the loaded value to Rd only when the store
+    // succeeded, then replay the instruction if it failed. The branch is the last micro-op of the bundle: a mispredicted
+    // branch squashes every younger micro-op, including the ones of its own bundle, so nothing may follow it. Rd keeps
+    // its value on a failure because the replay reads it again.
+    void rmwStoreAndRetry(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t base, uint32_t bytes, uint32_t rd, bool acquire)
     {
+        using namespace A64Sem;
         add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, base, 0, A64Reg::T2, A64Reg::T3, bytes,
             STORE_INT_REGISTER, 0, 1));
+        if ( rd != 31 ) {
+            op(bundle, addr, "RMWRES", INST_INT_ARITH, rmwCommit, { A64Reg::T3, A64Reg::T1, static_cast<uint16_t>(rd) },
+                { static_cast<uint16_t>(rd) })->c = bytes;
+        }
+        if ( acquire ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         add(bundle, new VanadisArm64Branch(addr, hw_thr, options, "RMWRETRY", VanadisArm64BranchKind::CBNZ, 0, 0, true,
             { A64Reg::T3 }, {}));
     }
@@ -1165,9 +1174,7 @@ protected:
         if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         loadInt(bundle, addr, rs(rn), 0, A64Reg::T1, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
         op(bundle, addr, "CASVAL", INST_INT_ARITH, casValue, { A64Reg::T1, rz(rs_), rz(rt) }, { A64Reg::T2 })->c = bytes;
-        rmwStoreAndRetry(bundle, addr, rs(rn), bytes);
-        if ( rs_ != 31 ) op(bundle, addr, "CASRES", INST_INT_ARITH, zeroExtendTo, { A64Reg::T1 }, { static_cast<uint16_t>(rs_) })->c = bytes;
-        if ( A ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        rmwStoreAndRetry(bundle, addr, rs(rn), bytes, rs_, A);
         return true;
     }
 
@@ -1202,22 +1209,27 @@ protected:
         i->c = elem;
         add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT1, A64Reg::T3,
             elem * 2, STORE_FP_REGISTER, 0, 1));
-        add(bundle, new VanadisArm64Branch(addr, hw_thr, options, "RMWRETRY", VanadisArm64BranchKind::CBNZ, 0, 0, true,
-            { A64Reg::T3 }, {}));
+        // The pair goes to Rs, Rs+1 only when the store succeeded; the branch is the last micro-op (rmwStoreAndRetry).
         std::vector<uint16_t> out = dz(rs_);
         for ( auto r : dz(rs_ + 1) ) out.push_back(r);
-        auto* j = op(bundle, addr, "SPLITPAIR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+        auto* j = op(bundle, addr, "RMWRES2", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
             const uint8_t* v = o.Vin(rf, 0);
             uint64_t lo = 0, hi = 0;
             std::memcpy(&lo, v, o.c);
             std::memcpy(&hi, v + o.c, o.c);
+            if ( o.X(rf, 0) != 0 ) {
+                lo = o.X(rf, 1);
+                hi = o.X(rf, 2);
+            }
             uint32_t pos = 0;
             if ( o.a & 1 ) o.setX(rf, pos++, lo);
             if ( o.a & 2 ) o.setX(rf, pos++, hi);
-        }, {}, out, { A64Reg::VT0 });
+        }, { A64Reg::T3, rz(rs_), rz(rs_ + 1) }, out, { A64Reg::VT0 });
         j->c = elem;
         j->a = (rs_ != 31 ? 1 : 0) | (rs_ + 1 != 31 ? 2 : 0);
         if ( A ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        add(bundle, new VanadisArm64Branch(addr, hw_thr, options, "RMWRETRY", VanadisArm64BranchKind::CBNZ, 0, 0, true,
+            { A64Reg::T3 }, {}));
         return true;
     }
 
@@ -1253,9 +1265,7 @@ protected:
         auto* i = op(bundle, addr, "ATOMICOP", INST_INT_ARITH, atomicOp, { A64Reg::T1, rz(rs_) }, { A64Reg::T2 });
         i->b = kind;
         i->c = bytes;
-        rmwStoreAndRetry(bundle, addr, rs(rn), bytes);
-        if ( rt != 31 ) op(bundle, addr, "ATOMICRES", INST_INT_ARITH, zeroExtendTo, { A64Reg::T1 }, { static_cast<uint16_t>(rt) })->c = bytes;
-        if ( A ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
+        rmwStoreAndRetry(bundle, addr, rs(rn), bytes, rt, A);
         return true;
     }
 
