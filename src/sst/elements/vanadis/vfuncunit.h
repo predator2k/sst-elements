@@ -51,8 +51,9 @@ private:
 class VanadisFunctionalUnit {
 
 public:
-    VanadisFunctionalUnit(uint16_t id, VanadisFunctionalUnitType unit_type, uint16_t lat, bool blocks_while_busy = false)
-        : fu_id(id), fu_type(unit_type), latency(lat), accept_this_cycle(true), blocking(blocks_while_busy) {
+    VanadisFunctionalUnit(uint16_t id, VanadisFunctionalUnitType unit_type, uint16_t lat, bool blocks_while_busy = false,
+        uint16_t pipe_index = 0)
+        : fu_id(id), fu_type(unit_type), latency(lat), accept_this_cycle(true), blocking(blocks_while_busy), pipe(pipe_index) {
     }
 
     ~VanadisFunctionalUnit() {
@@ -63,12 +64,27 @@ public:
 
     VanadisFunctionalUnitType getType() const { return fu_type; }
 
-    bool isInstructionSlotFree() const { return accept_this_cycle && ! (blocking && ! pending_execute.empty()); }
+    bool isInstructionSlotFree() const { return accept_this_cycle && 0 == busy_cycles && ! (blocking && ! pending_execute.empty()); }
+
+    // The pipe can take this micro-op: a timing class names the pipes that can.
+    bool canTake(const VanadisInstruction* ins) const
+    {
+        const VanadisTimingRecord* timing = ins->getTiming();
+        return isInstructionSlotFree() && ( nullptr == timing || 0 == timing->pipe_mask || ( (timing->pipe_mask >> pipe) & 1 ) );
+    }
+
+    // The index of the pipe within its unit, the bit the pipe masks of the timing classes use.
+    uint16_t getPipe() const { return pipe; }
 
     void insertInstruction(VanadisInstruction* ins) {
         //assert(accept_this_cycle == true);
-        pending_execute.push_back(new VanadisFunctionalUnitInsRecord(ins, latency + ins->getExtraExecuteCycles()));
+        const VanadisTimingRecord* timing = ins->getTiming();
+        // A unit with latency L executes L + 1 ticks after the issue; a timing class gives the issue-to-issue latency.
+        const uint16_t cycles = nullptr == timing ? latency + ins->getExtraExecuteCycles()
+                                                  : ( ins->getTimedLatency() > 0 ? ins->getTimedLatency() - 1 : 0 );
+        pending_execute.push_back(new VanadisFunctionalUnitInsRecord(ins, cycles));
         accept_this_cycle = false;
+        busy_cycles = nullptr == timing || timing->issue_interval < 1 ? 0 : timing->issue_interval - 1;
     }
 
     uint16_t getUnitID() const { return fu_id; }
@@ -82,6 +98,7 @@ public:
             {
                 VanadisInstruction* inner_ins = q_item->getInstruction();
                 inner_ins->execute(output, regFile);
+                inner_ins->setExecutedCycle(cycle);
 
                 if(LIKELY(inner_ins->completedExecution()))
                 {
@@ -104,6 +121,7 @@ public:
         }
 
         accept_this_cycle = true;
+        if ( busy_cycles > 0 ) busy_cycles--;
     }
 
     void clearByHWThreadID(SST::Output* output, const uint16_t hw_thr) {
@@ -111,6 +129,7 @@ public:
         output->verbose(CALL_INFO, 16, 0, "-> Function Unit, clearing by hardware thread %" PRIu32 "...\n", hw_thr);
         #endif
 
+        busy_cycles = 0;
         for (auto q_itr = pending_execute.begin(); q_itr != pending_execute.end();) {
             // if we get a hardware thread match, remove and carry out
             if ((*q_itr)->getHardwareThread() == hw_thr) {
@@ -142,6 +161,10 @@ private:
     bool accept_this_cycle;
     // The unit takes no new instruction until the current one has executed, as a divider does.
     bool blocking;
+    // The index of the pipe within its unit.
+    uint16_t pipe;
+    // Cycles before the pipe takes another micro-op, from the issue interval of the last one it took.
+    uint16_t busy_cycles = 0;
 };
 
 } // namespace Vanadis

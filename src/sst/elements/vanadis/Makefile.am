@@ -258,6 +258,7 @@ inst/vgpr2fp.h \
 inst/vinst.h \
 inst/vinstall.h \
 inst/vinsttype.h \
+inst/vtiming.h \
 inst/vjl.h \
 inst/vjlr.h \
 inst/vjr.h \

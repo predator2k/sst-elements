@@ -60,6 +60,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 { "issues_per_cycle", "Maximum number of issues the LSQ can attempt per cycle.", "2"},
         { "stores_per_cycle", "Stores that can go to memory per cycle.", "1"},
         { "store_forward_cycles", "Cycles from the issue of a load to its data when an older store holds all of its bytes. 0 makes the load wait until the store has gone to memory.", "0"},
+        { "fp_load_extra_cycles", "Cycles a load into a floating-point or vector register takes above a load into an integer register", "0"},
                 #ifdef VANADIS_BUILD_DEBUG
                 { "address_mask", "Can mask off address bits if needed during construction of a operation for debug", "0xFFFFFFFFFFFFFFFF"}
                 #endif
@@ -87,7 +88,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             max_loads_(params.find<size_t>("max_loads", 16)),
             max_issue_attempts_per_cycle_(params.find("issues_per_cycle", 2)),
             stores_per_cycle_(params.find<uint32_t>("stores_per_cycle", 1)),
-            store_forward_cycles_(params.find<uint64_t>("store_forward_cycles", 0))
+            store_forward_cycles_(params.find<uint64_t>("store_forward_cycles", 0)),
+            fp_load_extra_cycles_(params.find<uint64_t>("fp_load_extra_cycles", 0))
         {
             std_mem_handlers_ = new VanadisBasicLoadStoreQueue::StandardMemHandlers(this, output_);
 
@@ -200,6 +202,16 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 }
             }
 
+            for(auto delayed_itr = delayed_fp_loads_.begin(); delayed_itr != delayed_fp_loads_.end(); ) {
+                if( delayed_itr->thread == thread ) {
+                    delayed_ids_.erase(delayed_itr->response->getID());
+                    delete delayed_itr->response;
+                    delayed_itr = delayed_fp_loads_.erase(delayed_itr);
+                } else {
+                    ++delayed_itr;
+                }
+            }
+
             stores_pending_size_ -= stores_pending_[thread].size();
             for(auto store_itr = stores_pending_[thread].begin(); store_itr != stores_pending_[thread].end(); ) {
                 delete (*store_itr);
@@ -279,6 +291,11 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 forwarded_loads_.pop_front();
                 std_mem_handlers_->handle(response);
             }
+            while( ! delayed_fp_loads_.empty() && delayed_fp_loads_.front().ready_cycle <= cycle ) {
+                StandardMem::ReadResp* response = delayed_fp_loads_.front().response;
+                delayed_fp_loads_.pop_front();
+                std_mem_handlers_->handle(response);
+            }
 
             // A parked load waits for an older store.
             for(auto parked_itr = parked_loads_.begin(); parked_itr != parked_loads_.end(); ) {
@@ -310,6 +327,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             uint32_t ports = 1;
             if (front->getStoreInstruction()->takesAllStorePorts()) ports = stores_per_cycle_;
             else if (operationStraddlesCacheLine(front->getStoreAddress(), front->getStoreWidth())) ports = 2;
+            else if (front->getStoreInstruction()->sharesStorePort()) ports = 0;
             if (issueStoreFront(thread)) stores_this_cycle_ += ports;
         }
 
@@ -411,6 +429,17 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                     if(nullptr == load_entry) {
                         // not found, so previous cleared by a branch mis-predict ignore
                         return;
+                    }
+
+                    // A load into a vector register takes its data fp_load_extra_cycles later than one into an integer
+                    // register: the response waits that long before it is applied.
+                    if(lsq_->fp_load_extra_cycles_ > 0 && load_ins->getValueRegisterType() == LOAD_FP_REGISTER) {
+                        if(lsq_->delayed_ids_.erase(ev->getID()) == 0) {
+                            lsq_->delayed_ids_.insert(ev->getID());
+                            lsq_->delayed_fp_loads_.push_back({ lsq_->current_cycle_ + 1 + lsq_->fp_load_extra_cycles_,
+                                load_ins->getHWThread(), ev });
+                            return;
+                        }
                     }
 
                     #ifdef VANADIS_BUILD_DEBUG
@@ -1669,6 +1698,10 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             StandardMem::ReadResp* response;
         };
         std::deque<ForwardedLoad> forwarded_loads_;
+        // Responses of loads into vector registers that wait fp_load_extra_cycles, and their request ids.
+        const uint64_t fp_load_extra_cycles_;
+        std::deque<ForwardedLoad> delayed_fp_loads_;
+        std::set<StandardMem::Request::id_t> delayed_ids_;
 
         // Loads that wait for an older store.
         std::deque<VanadisLoadInstruction*> parked_loads_;

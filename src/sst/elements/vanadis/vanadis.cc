@@ -16,6 +16,8 @@
 #include <sst_config.h>
 #include "vanadis.h"
 
+#include <algorithm>
+
 #include "inst/vinstall.h"
 #include "velf/velfinfo.h"
 #include "decoder/vriscv64decoder.h"
@@ -313,8 +315,9 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
         int_arith_cycles);
 
     for ( uint16_t i = 0; i < int_arith_units; ++i ) {
-        fu_int_arith.push_back(new VanadisFunctionalUnit(fu_id++, INST_INT_ARITH, int_arith_cycles));
+        fu_int_arith.push_back(new VanadisFunctionalUnit(fu_id++, INST_INT_ARITH, int_arith_cycles, false, i));
     }
+    orderPipes(params, "integer_arith_pipe_order", fu_int_arith);
 
     const uint16_t int_div_units  = params.find<uint16_t>("integer_div_units", 1);
     const uint16_t int_div_cycles = params.find<uint16_t>("integer_div_cycles", 4);
@@ -335,8 +338,9 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
         branch_cycles);
 
     for ( uint16_t i = 0; i < branch_units; ++i ) {
-        fu_branch.push_back(new VanadisFunctionalUnit(fu_id++, INST_BRANCH, branch_cycles));
+        fu_branch.push_back(new VanadisFunctionalUnit(fu_id++, INST_BRANCH, branch_cycles, false, i));
     }
+    orderPipes(params, "branch_pipe_order", fu_branch);
 
     //////////////////////////////////////////////////////////////////////////////////////
 
@@ -348,8 +352,9 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
         fp_arith_units, fp_arith_cycles);
 
     for ( uint16_t i = 0; i < fp_arith_units; ++i ) {
-        fu_fp_arith.push_back(new VanadisFunctionalUnit(fu_id++, INST_FP_ARITH, fp_arith_cycles));
+        fu_fp_arith.push_back(new VanadisFunctionalUnit(fu_id++, INST_FP_ARITH, fp_arith_cycles, false, i));
     }
+    orderPipes(params, "fp_arith_pipe_order", fu_fp_arith);
 
     const uint16_t fp_div_units  = params.find<uint16_t>("fp_div_units", 1);
     const uint16_t fp_div_cycles = params.find<uint16_t>("fp_div_cycles", 80);
@@ -516,6 +521,35 @@ VanadisCore::performFetch(const uint64_t cycle)
 }
 
 void
+VanadisCore::orderPipes(SST::Params& params, const char* key, std::vector<VanadisFunctionalUnit*>& units)
+{
+    std::vector<uint16_t> order;
+    params.find_array<uint16_t>(key, order);
+    if ( order.empty() ) return;
+    if ( order.size() != units.size() ) {
+        output->fatal(CALL_INFO, -1, "%s names %zu pipes; the unit has %zu\n", key, order.size(), units.size());
+    }
+    std::vector<VanadisFunctionalUnit*> ordered;
+    for ( const uint16_t pipe : order ) {
+        auto found = std::find_if(units.begin(), units.end(), [pipe](const VanadisFunctionalUnit* u) { return u->getPipe() == pipe; });
+        if ( found == units.end() || std::find(ordered.begin(), ordered.end(), *found) != ordered.end() ) {
+            output->fatal(CALL_INFO, -1, "%s: pipe %" PRIu16 " is missing or repeated\n", key, pipe);
+        }
+        ordered.push_back(*found);
+    }
+    units = ordered;
+}
+
+bool
+VanadisCore::forwardingPenalty(const VanadisInstruction* producer, const VanadisInstruction* consumer) const
+{
+    const VanadisTimingRecord* p = producer->getTiming();
+    const VanadisTimingRecord* c = consumer->getTiming();
+    if ( nullptr == p || nullptr == c || ! p->vector_pipe || ! c->vector_pipe || 0 == c->region_in ) return false;
+    return 0 == ( p->region_out & c->region_in );
+}
+
+void
 VanadisCore::performRename(const uint32_t hw_thr)
 {
     if ( halted_masks[hw_thr] ) return;
@@ -546,22 +580,42 @@ VanadisCore::performRename(const uint32_t hw_thr)
 }
 
 bool
+VanadisCore::accumulatorBypassed(const VanadisInstruction* ins, const VanadisInstruction* producer) const
+{
+    if ( producer->getAccumulatorCycles() == 0 || ! producer->completedIssue()
+         || issue_stage_cycle < producer->getAccumulatorReadyCycle() ) {
+        return false;
+    }
+    // The consumer must execute after the producer. Without timing classes both take the same number of cycles from issue;
+    // with them the consumer's latency is compared with the producer's.
+    const VanadisTimingRecord* p = producer->getTiming();
+    const VanadisTimingRecord* c = ins->getTiming();
+    if ( nullptr == p || nullptr == c ) return true;
+    const uint64_t producer_executes = producer->getIssueCycle() + producer->getTimedLatency();
+    const uint64_t consumer_executes = issue_stage_cycle + std::max<uint16_t>(c->latency, 1);
+    return consumer_executes > producer_executes;
+}
+
+bool
 VanadisCore::inputValuesReady(const VanadisInstruction* ins, const bool include_store_data) const
 {
     for ( uint16_t i = 0; i < ins->countISAIntRegIn(); ++i ) {
         if ( ! include_store_data && ins->isStoreDataIntRegIn(i) ) continue;
         const VanadisInstruction* producer = int_phys_reg_producer[ins->getPhysIntRegIn(i)];
-        if ( nullptr != producer && ! producer->completedExecution() ) return false;
+        if ( nullptr == producer || producer->completedExecution() ) continue;
+        if ( ! ( i == ins->getAccumulatorIntRegIn() && accumulatorBypassed(ins, producer) ) ) return false;
     }
     for ( uint16_t i = 0; i < ins->countISAFPRegIn(); ++i ) {
         if ( ! include_store_data && ins->isStoreDataFPRegIn(i) ) continue;
         const VanadisInstruction* producer = fp_phys_reg_producer[ins->getPhysFPRegIn(i)];
-        if ( nullptr == producer || producer->completedExecution() ) continue;
-        // The accumulator of a multiply-add bypasses the multiplier of the multiply-add that produces it. The consumer
-        // executes after the producer, because both take the same number of cycles from issue.
-        const bool bypassed = i == ins->getAccumulatorFPRegIn() && producer->getAccumulatorCycles() > 0
-            && producer->completedIssue() && issue_stage_cycle >= producer->getAccumulatorReadyCycle();
-        if ( ! bypassed ) return false;
+        if ( nullptr == producer ) continue;
+        if ( producer->completedExecution() ) {
+            // A vector producer and consumer in different forwarding regions take one more cycle.
+            if ( forwardingPenalty(producer, ins) && issue_stage_cycle <= producer->getExecutedCycle() ) return false;
+            continue;
+        }
+        // The accumulator of a multiply-add bypasses the multiplier of the multiply-add that produces it.
+        if ( ! ( i == ins->getAccumulatorFPRegIn() && accumulatorBypassed(ins, producer) ) ) return false;
     }
     return true;
 }
@@ -647,8 +701,20 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
         const bool can_issue = ( INST_SYSCALL == ins_type || inputValuesReady(ins, false) ) && order_allows
             && ! ( ins->isSerializing() && 0 != j );
 
-        if ( can_issue && 0 == allocateFunctionalUnit(ins) ) {
+        const VanadisTimingRecord* timing = ins->getTiming();
+        if ( can_issue && nullptr != timing && timing->dynamic != VanadisTimingDynamic::FIXED ) {
+            ins->setDynamicCycles(ins->dynamicLatency(register_files[hwThr]));
+        }
+        // A micro-op of latency 0 executes at issue without a pipe, so a younger consumer can issue in the same cycle.
+        const bool at_issue = can_issue && nullptr != timing && 0 == timing->latency
+            && ( INST_INT_ARITH == ins_type || INST_FP_ARITH == ins_type );
+        if ( at_issue ) {
+            ins->execute(output, register_files);
+            ins->setExecutedCycle(cycle);
+        }
+        if ( can_issue && ( at_issue || 0 == allocateFunctionalUnit(ins) ) ) {
             ins->markIssued();
+            ins->setIssueCycle(cycle);
             ins->setAccumulatorReadyCycle(cycle + ins->getAccumulatorCycles());
             ins_issued_this_cycle++;
             rob_start = j;
@@ -1428,7 +1494,7 @@ VanadisCore::mapInstructiontoFunctionalUnit(
     bool allocated = false;
 
     for ( VanadisFunctionalUnit* next_fu : functional_units ) {
-        if ( LIKELY(next_fu->isInstructionSlotFree() )) {
+        if ( LIKELY(next_fu->canTake(ins) )) {
             next_fu->insertInstruction(ins);
             allocated = true;
 

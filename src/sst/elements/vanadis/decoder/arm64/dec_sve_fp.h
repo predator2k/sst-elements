@@ -32,12 +32,14 @@ VanadisARM64Decoder::decodeSveFpMiscInt(uint64_t addr, uint32_t ins, VanadisInst
     if ( size == 0 ) return false;
     if ( (ins & 0xFF20FC00) == 0x0420B000 ) {
         auto* i = op(bundle, addr, "FTSSEL", INST_FP_ARITH, trigMisc, {}, {}, { rn, rm }, { rd });
+        tc(i, A64Tc::FP_MUL);
         i->a = size;
         i->c = 0;
         return true;
     }
     if ( (ins & 0xFF3FFC00) == 0x0420B800 ) {
         auto* i = op(bundle, addr, "FEXPA", INST_FP_ARITH, trigMisc, {}, {}, { rn }, { rd });
+        tc(i, A64Tc::ZF_FEXPA);
         i->a = size;
         i->c = 1;
         return true;
@@ -53,8 +55,11 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
     const uint16_t rn = bits(ins, 9, 5), rd = bits(ins, 4, 0), rm = bits(ins, 20, 16);
     const uint16_t pg = a64Pred(bits(ins, 12, 10));
     const uint16_t fpcr = A64Reg::FPCR;
-    const auto unary_like = [&](const char* name, VanadisArm64Inst::Semantics fn, uint32_t a, uint32_t c, uint32_t d) {
+    // Rounding, conversion and estimate classes by the element size of the wider operand.
+    const auto zcvt = [](uint32_t log2_bytes) { return log2_bytes <= 1 ? A64Tc::Z_CVT_H : log2_bytes == 2 ? A64Tc::Z_CVT_S : A64Tc::Z_CVT_D; };
+    const auto unary_like = [&](const char* name, VanadisArm64Inst::Semantics fn, uint32_t a, uint32_t c, uint32_t d, A64Tc cls) {
         auto* i = op(bundle, addr, name, INST_FP_ARITH, fn, { fpcr }, {}, { pg, rd, rn }, { rd });
+        tc(i, cls);
         i->a = a;
         i->c = c;
         i->d = d;
@@ -89,6 +94,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             if ( is_mul && sub ) return false;
             auto* i = op(bundle, addr, "FMUL.ZE", INST_FP_ARITH, fpIndexed, { fpcr }, {},
                 is_mul ? std::vector<uint16_t> { rn, zm } : std::vector<uint16_t> { rn, zm, rd }, { rd });
+            tc(i, is_mul ? A64Tc::FP_MUL : A64Tc::FP_MLA);
             i->a = a;
             i->c = is_mul ? 2 : (sub ? 1 : 0);
             i->imm = index;
@@ -99,6 +105,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         if ( (ins & 0xFF208000) == 0x64000000 ) {
             if ( size == 0 ) return false;
             auto* i = op(bundle, addr, "FCMLA.Z", INST_FP_ARITH, fcmlaZ, { fpcr }, {}, { pg, rd, rn, rm }, { rd });
+            tc(i, A64Tc::FP_COMPLEX_MLA);
             i->a = size;
             i->d = bits(ins, 14, 13);
             return true;
@@ -106,6 +113,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         if ( (ins & 0xFF3EE000) == 0x64008000 ) {
             if ( size == 0 ) return false;
             auto* i = op(bundle, addr, "FCADD.Z", INST_FP_ARITH, fcaddZ, { fpcr }, {}, { pg, rd, rn }, { rd });
+            tc(i, A64Tc::FP_ALU);
             i->a = size;
             i->d = bit(ins, 16);
             return true;
@@ -114,6 +122,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             const bool is_s = bit(ins, 22);
             const uint16_t zm = is_s ? bits(ins, 19, 16) : bits(ins, 18, 16);
             auto* i = op(bundle, addr, "FCMLA.ZE", INST_FP_ARITH, fcmlaZ, { fpcr }, {}, { rd, rn, zm }, { rd });
+            tc(i, A64Tc::FP_COMPLEX_MLA);
             i->a = is_s ? 2 : 1;
             i->c = 1;
             i->d = bits(ins, 11, 10);
@@ -124,6 +133,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             // FADDP, FMAXNMP, FMINNMP, FMAXP, FMINP
             if ( size == 0 ) return false;
             auto* i = op(bundle, addr, "FPAIR.Z", INST_FP_ARITH, fpPairwiseZ, { fpcr }, {}, { pg, rd, rn }, { rd });
+            tc(i, A64Tc::FP_ALU);
             i->a = size;
             const uint32_t k = bits(ins, 18, 16);
             i->c = k == 0 ? 0 : k;
@@ -134,6 +144,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             const bool is_bf = bit(ins, 22), s = bit(ins, 13);
             if ( is_bf && s ) return false;
             auto* i = op(bundle, addr, "FMLAL.Z", INST_FP_ARITH, is_bf ? bfmlalZ : fmlalZ, { fpcr }, {}, { rd, rn, rm }, { rd });
+            tc(i, A64Tc::FP_COMPLEX_MLA);
             i->c = s;
             i->d = bit(ins, 10);
             markMultiplyAdd(i, 0);
@@ -144,6 +155,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             if ( is_bf && s ) return false;
             const uint16_t zm = bits(ins, 18, 16);
             auto* i = op(bundle, addr, "FMLAL.ZE", INST_FP_ARITH, is_bf ? bfmlalZ : fmlalZ, { fpcr }, {}, { rd, rn, zm }, { rd });
+            tc(i, A64Tc::FP_COMPLEX_MLA);
             i->c = s;
             i->d = bit(ins, 10) | 2;
             i->imm = (bits(ins, 20, 19) << 1) | static_cast<uint32_t>(bit(ins, 11));
@@ -151,28 +163,30 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             return true;
         }
         if ( (ins & 0xFFE0FC00) == 0x64608000 ) {
-            op(bundle, addr, "BFDOT.Z", INST_FP_ARITH, bfdotZ, {}, {}, { rd, rn, rm }, { rd });
+            tc(op(bundle, addr, "BFDOT.Z", INST_FP_ARITH, bfdotZ, {}, {}, { rd, rn, rm }, { rd }), A64Tc::BF_DOT);
             return true;
         }
         if ( (ins & 0xFFE0FC00) == 0x64604000 ) {
             auto* i = op(bundle, addr, "BFDOT.ZE", INST_FP_ARITH, bfdotZ, {}, {}, { rd, rn, static_cast<uint16_t>(bits(ins, 18, 16)) }, { rd });
+            tc(i, A64Tc::BF_DOT);
             i->d = 1;
             i->imm = bits(ins, 20, 19);
             return true;
         }
         if ( (ins & 0xFFE0FC00) == 0x6460E400 ) {
-            op(bundle, addr, "BFMMLA.Z", INST_FP_ARITH, bfmmlaZ, {}, {}, { rd, rn, rm }, { rd });
+            tc(op(bundle, addr, "BFMMLA.Z", INST_FP_ARITH, bfmmlaZ, {}, {}, { rd, rn, rm }, { rd }), A64Tc::BF_MMLA);
             return true;
         }
         if ( (ins & 0xFFA0FC00) == 0x64A0E400 ) {
             auto* i = op(bundle, addr, "FMMLA.Z", INST_FP_ARITH, fmmlaZ, { fpcr }, {}, { rd, rn, rm }, { rd });
+            tc(i, A64Tc::FP_MLA);
             i->a = bit(ins, 22) ? 3 : 2;
             return true;
         }
-        if ( (ins & 0xFFFFE000) == 0x6489A000 || (ins & 0xFFFFE000) == 0x64CBA000 ) return unary_like("FCVTLT", fpTopConvert, bit(ins, 22) ? 3 : 2, 0, 0);
-        if ( (ins & 0xFFFFE000) == 0x6488A000 || (ins & 0xFFFFE000) == 0x64CAA000 ) return unary_like("FCVTNT", fpTopConvert, bit(ins, 22) ? 3 : 2, 1, 0);
-        if ( (ins & 0xFFFFE000) == 0x640AA000 ) return unary_like("FCVTXNT", fpTopConvert, 3, 2, 0);
-        if ( (ins & 0xFFFFE000) == 0x648AA000 ) return unary_like("BFCVTNT", fpTopConvert, 2, 3, 0);
+        if ( (ins & 0xFFFFE000) == 0x6489A000 || (ins & 0xFFFFE000) == 0x64CBA000 ) return unary_like("FCVTLT", fpTopConvert, bit(ins, 22) ? 3 : 2, 0, 0, bit(ins, 22) ? A64Tc::Z_CVT_D : A64Tc::Z_CVT_S);
+        if ( (ins & 0xFFFFE000) == 0x6488A000 || (ins & 0xFFFFE000) == 0x64CAA000 ) return unary_like("FCVTNT", fpTopConvert, bit(ins, 22) ? 3 : 2, 1, 0, bit(ins, 22) ? A64Tc::Z_CVT_D : A64Tc::Z_CVT_S);
+        if ( (ins & 0xFFFFE000) == 0x640AA000 ) return unary_like("FCVTXNT", fpTopConvert, 3, 2, 0, zcvt(3));
+        if ( (ins & 0xFFFFE000) == 0x648AA000 ) return unary_like("BFCVTNT", fpTopConvert, 2, 3, 0, A64Tc::BF_CVT);
         return false;
     }
     // The 0x65 group.
@@ -180,12 +194,14 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         if ( size == 0 ) return false;
         if ( !bit(ins, 15) ) {
             auto* i = op(bundle, addr, "FMLA.Z", INST_FP_ARITH, predFpMulAdd, { fpcr }, {}, { pg, rd, rn, rm }, { rd });
+            tc(i, A64Tc::FP_MLA);
             i->a = size;
             i->c = bits(ins, 14, 13);
             markMultiplyAdd(i, 1);
             return true;
         }
         auto* i = op(bundle, addr, "FMAD.Z", INST_FP_ARITH, predFpMulAdd, { fpcr }, {}, { pg, rd, rn, rm }, { rd });
+        tc(i, A64Tc::FP_MLA);
         i->a = size;
         i->c = 4 + bits(ins, 14, 13);
         markMultiplyAdd(i, 3);
@@ -197,6 +213,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         const uint32_t k = bits(ins, 12, 10);
         if ( size == 0 || !(k <= 3 || k == 6 || k == 7) ) return false;
         auto* i = op(bundle, addr, "FARITH.Z", INST_FP_ARITH, unpredFp, { fpcr }, {}, { rn, rm }, { rd });
+        tc(i, (k == 2 || k == 3) ? A64Tc::FP_MUL : (k == 6 || k == 7) ? A64Tc::FP_RECPS : A64Tc::FP_ALU);
         i->a = size;
         i->c = k;
         if ( k == 2 || k == 3 ) i->setExtraExecuteCycles(fp_mul_extra_cycles);    // FMUL, FTSMUL
@@ -205,6 +222,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
     if ( (ins & 0xFF3EFC00) == 0x650E3000 ) {
         if ( size == 0 ) return false;
         auto* i = op(bundle, addr, "FEST.Z", INST_FP_ARITH, estimateZ, { fpcr }, {}, { rn }, { rd });
+        tc(i, zcvt(size));
         i->a = size;
         i->c = bit(ins, 16);
         return true;
@@ -214,11 +232,13 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         const uint32_t k = bits(ins, 20, 16);
         if ( k == 0x18 ) {
             auto* i = op(bundle, addr, "FADDA", INST_FP_ARITH, fadda, { fpcr }, {}, { pg, rd, rn }, { rd });
+            tc(i, size == 1 ? A64Tc::ZF_ADDA_H : size == 2 ? A64Tc::ZF_ADDA_S : A64Tc::ZF_ADDA_D);
             i->a = size;
             return true;
         }
         if ( k == 0 || (k >= 4 && k <= 7) ) {
             auto* i = op(bundle, addr, "FREDUCE", INST_FP_ARITH, fpReduceZ, { fpcr }, {}, { pg, rn }, { rd });
+            tc(i, size == 1 ? A64Tc::ZF_REDUCE_H : size == 2 ? A64Tc::ZF_REDUCE_S : A64Tc::ZF_REDUCE_D);
             i->a = size;
             i->c = k;
             return true;
@@ -234,6 +254,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             default: if ( b4 ) return false; code = 3; break;
             }
             auto* i = op(bundle, addr, "FCMP.Z0", INST_FP_ARITH, fpCompareZ, { fpcr }, {}, { pg, rn }, { a64Pred(bits(ins, 3, 0)) });
+            tc(i, A64Tc::Z_CMP);
             i->a = size;
             i->c = code;
             i->d = 1;
@@ -259,6 +280,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         if ( size == 0 ) return false;
         auto* i = op(bundle, addr, "FCMP.Z", INST_FP_ARITH, fpCompareZ, { fpcr }, {},
             { a64Pred(bits(ins, 12, 10)), rn, rm }, { a64Pred(bits(ins, 3, 0)) });
+        tc(i, A64Tc::Z_CMP);
         i->a = size;
         i->c = static_cast<uint32_t>(code);
         return true;
@@ -271,6 +293,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             const uint32_t code = bits(ins, 19, 16);
             if ( code == 11 || code >= 14 ) return false;
             auto* i = op(bundle, addr, code == 12 || code == 13 ? "FDIV.Z" : "FBIN.Z", code == 12 || code == 13 ? INST_FP_DIV : INST_FP_ARITH, predFpBin, { fpcr }, {}, { pg, rd, rn }, { rd });
+            tc(i, (code == 12 || code == 13) ? vectorDivClass(1u << size, 16) : (code == 2 || code == 9 || code == 10) ? A64Tc::FP_MUL : A64Tc::FP_ALU);
             i->a = size;
             i->c = code;
             if ( code == 2 || code == 10 ) i->setExtraExecuteCycles(fp_mul_extra_cycles);    // FMUL, FMULX
@@ -291,6 +314,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
             default: v = i1 ? one : 0; break;
             }
             auto* i = op(bundle, addr, "FBIN.ZI", INST_FP_ARITH, predFpBin, { fpcr }, {}, { pg, rd }, { rd });
+            tc(i, code == 2 ? A64Tc::FP_MUL : A64Tc::FP_ALU);
             i->a = size;
             i->c = code;
             i->d = 1;
@@ -299,6 +323,7 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         }
         if ( (ins & 0xFF38FC00) == 0x65108000 ) {
             auto* i = op(bundle, addr, "FTMAD", INST_FP_ARITH, ftmad, { fpcr }, {}, { rd, rn }, { rd });
+            tc(i, A64Tc::FP_MLA);
             i->a = size;
             i->imm = bits(ins, 18, 16);
             return true;
@@ -309,15 +334,16 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         const uint32_t k = bits(ins, 20, 16);
         if ( k <= 7 ) {
             if ( size == 0 || k == 5 ) return false;
-            return unary_like("FRINT.Z", predFpUnary, size, k, 0);
+            return unary_like("FRINT.Z", predFpUnary, size, k, 0, zcvt(size));
         }
         if ( k == 0x0C ) {
             if ( size == 0 ) return false;
-            return unary_like("FUN.Z", predFpUnary, size, 8, 0);
+            return unary_like("FUN.Z", predFpUnary, size, 8, 0, zcvt(size));
         }
         if ( k == 0x0D ) {
             if ( size == 0 ) return false;
             auto* i = op(bundle, addr, "FSQRT.Z", INST_FP_DIV, predFpUnary, { fpcr }, {}, { pg, rd, rn }, { rd });
+            tc(i, vectorDivClass(1u << size, 16));
             i->a = size;
             i->c = 9;
             i->d = 0;
@@ -326,42 +352,42 @@ VanadisARM64Decoder::decodeSveFp(uint64_t addr, uint32_t ins, VanadisInstruction
         if ( (ins & 0xFFF8E000) == 0x6510A000 ) {
             // FRINT32Z, FRINT32X, FRINT64Z, FRINT64X: bit 18 = 64, bit 17 = D, bit 16 = X
             const uint32_t code = (bit(ins, 18) ? 12u : 10u) + (bit(ins, 16) ? 1u : 0u);
-            return unary_like("FRINTN.Z", predFpUnary, bit(ins, 17) ? 3 : 2, code, 0);
+            return unary_like("FRINTN.Z", predFpUnary, bit(ins, 17) ? 3 : 2, code, 0, bit(ins, 17) ? A64Tc::Z_CVT_D : A64Tc::Z_CVT_S);
         }
         if ( (ins & 0xFFF9E000) == 0x6518A000 ) {
             const uint32_t sz = bits(ins, 18, 17);
             if ( sz == 0 ) return false;
-            return unary_like("FLOGB.Z", predFpUnary, sz, 14, 0);
+            return unary_like("FLOGB.Z", predFpUnary, sz, 14, 0, zcvt(sz));
         }
         switch ( ins & 0xFFFFE000 ) {
-        case 0x6588A000: return unary_like("FCVT.Z", fpConvertZ, 2, 0x21, 0);
-        case 0x6589A000: return unary_like("FCVT.Z", fpConvertZ, 2, 0x12, 0);
-        case 0x65C8A000: return unary_like("FCVT.Z", fpConvertZ, 3, 0x31, 0);
-        case 0x65C9A000: return unary_like("FCVT.Z", fpConvertZ, 3, 0x13, 0);
-        case 0x65CAA000: return unary_like("FCVT.Z", fpConvertZ, 3, 0x32, 0);
-        case 0x65CBA000: return unary_like("FCVT.Z", fpConvertZ, 3, 0x23, 0);
-        case 0x650AA000: return unary_like("FCVTX.Z", fpConvertZ, 3, 0, 1);
-        case 0x658AA000: return unary_like("BFCVT.Z", bfConvertZ, 2, 0, 0);
+        case 0x6588A000: return unary_like("FCVT.Z", fpConvertZ, 2, 0x21, 0, A64Tc::Z_CVT_S);
+        case 0x6589A000: return unary_like("FCVT.Z", fpConvertZ, 2, 0x12, 0, A64Tc::Z_CVT_S);
+        case 0x65C8A000: return unary_like("FCVT.Z", fpConvertZ, 3, 0x31, 0, A64Tc::Z_CVT_D);
+        case 0x65C9A000: return unary_like("FCVT.Z", fpConvertZ, 3, 0x13, 0, A64Tc::Z_CVT_D);
+        case 0x65CAA000: return unary_like("FCVT.Z", fpConvertZ, 3, 0x32, 0, A64Tc::Z_CVT_D);
+        case 0x65CBA000: return unary_like("FCVT.Z", fpConvertZ, 3, 0x23, 0, A64Tc::Z_CVT_D);
+        case 0x650AA000: return unary_like("FCVTX.Z", fpConvertZ, 3, 0, 1, A64Tc::Z_CVT_D);
+        case 0x658AA000: return unary_like("BFCVT.Z", bfConvertZ, 2, 0, 0, A64Tc::BF_CVT);
         default: break;
         }
         // FCVTZS, FCVTZU: bit 16 is unsigned
         const uint32_t conv = (ins & 0xFFFEE000);
         const uint32_t d = bit(ins, 16) ? 0 : 1;
         switch ( conv ) {
-        case 0x655AA000: return unary_like("FCVTZ.Z", fpToIntZ, 1, 0x11, d);
-        case 0x655CA000: return unary_like("FCVTZ.Z", fpToIntZ, 2, 0x12, d);
-        case 0x655EA000: return unary_like("FCVTZ.Z", fpToIntZ, 3, 0x13, d);
-        case 0x659CA000: return unary_like("FCVTZ.Z", fpToIntZ, 2, 0x22, d);
-        case 0x65DCA000: return unary_like("FCVTZ.Z", fpToIntZ, 3, 0x23, d);
-        case 0x65D8A000: return unary_like("FCVTZ.Z", fpToIntZ, 3, 0x32, d);
-        case 0x65DEA000: return unary_like("FCVTZ.Z", fpToIntZ, 3, 0x33, d);
-        case 0x6552A000: return unary_like("SCVTF.Z", intToFpZ, 1, 0x11, d);
-        case 0x6554A000: return unary_like("SCVTF.Z", intToFpZ, 2, 0x21, d);
-        case 0x6556A000: return unary_like("SCVTF.Z", intToFpZ, 3, 0x31, d);
-        case 0x6594A000: return unary_like("SCVTF.Z", intToFpZ, 2, 0x22, d);
-        case 0x65D0A000: return unary_like("SCVTF.Z", intToFpZ, 3, 0x23, d);
-        case 0x65D4A000: return unary_like("SCVTF.Z", intToFpZ, 3, 0x32, d);
-        case 0x65D6A000: return unary_like("SCVTF.Z", intToFpZ, 3, 0x33, d);
+        case 0x655AA000: return unary_like("FCVTZ.Z", fpToIntZ, 1, 0x11, d, zcvt(1));
+        case 0x655CA000: return unary_like("FCVTZ.Z", fpToIntZ, 2, 0x12, d, zcvt(2));
+        case 0x655EA000: return unary_like("FCVTZ.Z", fpToIntZ, 3, 0x13, d, zcvt(3));
+        case 0x659CA000: return unary_like("FCVTZ.Z", fpToIntZ, 2, 0x22, d, zcvt(2));
+        case 0x65DCA000: return unary_like("FCVTZ.Z", fpToIntZ, 3, 0x23, d, zcvt(3));
+        case 0x65D8A000: return unary_like("FCVTZ.Z", fpToIntZ, 3, 0x32, d, zcvt(3));
+        case 0x65DEA000: return unary_like("FCVTZ.Z", fpToIntZ, 3, 0x33, d, zcvt(3));
+        case 0x6552A000: return unary_like("SCVTF.Z", intToFpZ, 1, 0x11, d, zcvt(1));
+        case 0x6554A000: return unary_like("SCVTF.Z", intToFpZ, 2, 0x21, d, zcvt(2));
+        case 0x6556A000: return unary_like("SCVTF.Z", intToFpZ, 3, 0x31, d, zcvt(3));
+        case 0x6594A000: return unary_like("SCVTF.Z", intToFpZ, 2, 0x22, d, zcvt(2));
+        case 0x65D0A000: return unary_like("SCVTF.Z", intToFpZ, 3, 0x23, d, zcvt(3));
+        case 0x65D4A000: return unary_like("SCVTF.Z", intToFpZ, 3, 0x32, d, zcvt(3));
+        case 0x65D6A000: return unary_like("SCVTF.Z", intToFpZ, 3, 0x33, d, zcvt(3));
         default: return false;
         }
     }

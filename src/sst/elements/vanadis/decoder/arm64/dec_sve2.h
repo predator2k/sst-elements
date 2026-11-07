@@ -36,6 +36,7 @@ VanadisARM64Decoder::decodeSve2Logic(uint64_t addr, uint32_t ins, VanadisInstruc
         const uint32_t a = 31 - __builtin_clz(tsz);
         const uint32_t full = (tsz << 3) | bits(ins, 18, 16);
         auto* i = op(bundle, addr, "XAR.Z", INST_FP_ARITH, xar, {}, {}, { rd, rn }, { rd });
+        tc(i, A64Tc::CRYPTO_SHA3);
         i->a = a;
         i->imm = (2u * (8u << a)) - full;
         return true;
@@ -52,6 +53,7 @@ VanadisARM64Decoder::decodeSve2Logic(uint64_t addr, uint32_t ins, VanadisInstruc
         code = table[size];
     }
     auto* i = op(bundle, addr, "TERN.Z", INST_FP_ARITH, ternaryLogic, {}, {}, { rd, rm, rn }, { rd });
+    tc(i, A64Tc::V_ALU);
     i->c = code;
     return true;
 }
@@ -70,6 +72,7 @@ VanadisARM64Decoder::decodeSve2MulUnpred(uint64_t addr, uint32_t ins, VanadisIns
     default: return false;
     }
     auto* i = op(bundle, addr, "MUL.ZU", INST_FP_ARITH, mulUnpred, {}, {}, { rn, rm }, { rd });
+    tc(i, A64Tc::V_MUL);
     i->a = size;
     i->c = (bits(ins, 15, 10) & 7);
     (void)k;
@@ -93,6 +96,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
                 const uint32_t code = bits(ins, 20, 16);
                 if ( code < 2 || code == 4 || code == 5 ) return false;
                 auto* i = op(bundle, addr, "SVE2.PB", INST_FP_ARITH, predBinary, {}, {}, { pg, rd, rn }, { rd });
+                tc(i, code < 0x10 ? A64Tc::V_SHIFT_COMPLEX : A64Tc::V_ALU);
                 i->a = size;
                 i->c = code;
                 return true;
@@ -103,6 +107,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
                 case 0x04: case 0x05: {
                     if ( size == 0 ) return false;
                     auto* i = op(bundle, addr, "ADALP", INST_FP_ARITH, adalp, {}, {}, { pg, rd, rn }, { rd });
+                    tc(i, A64Tc::V_ACCUMULATE);
                     i->a = size;
                     i->d = code & 1;
                     return true;
@@ -110,18 +115,21 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
                 case 0x00: case 0x01: {
                     if ( size != 2 ) return false;
                     auto* i = op(bundle, addr, "UEST.Z", INST_FP_ARITH, predUnary2, {}, {}, { pg, rd, rn }, { rd });
+                    tc(i, A64Tc::FP_CVT_S);
                     i->a = 2;
                     i->c = code;
                     return true;
                 }
                 case 0x08: case 0x09: {
                     auto* i = op(bundle, addr, "SQABS.Z", INST_FP_ARITH, predUnary2, {}, {}, { pg, rd, rn }, { rd });
+                    tc(i, A64Tc::V_ALU);
                     i->a = size;
                     i->c = code;
                     return true;
                 }
                 case 0x11: case 0x14: case 0x15: case 0x16: case 0x17: {
                     auto* i = op(bundle, addr, "SVE2.PAIR", INST_FP_ARITH, predPairwise, {}, {}, { pg, rd, rn }, { rd });
+                    tc(i, A64Tc::V_ALU);
                     i->a = size;
                     i->c = code;
                     return true;
@@ -131,12 +139,14 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             }
             if ( (ins & 0xFFA0FC00) == 0x44800000 || (ins & 0xFFA0FC00) == 0x44800400 ) {
                 auto* i = op(bundle, addr, "DOT.Z", INST_FP_ARITH, dotZ, {}, {}, { rd, rn, rm }, { rd });
+                tc(i, A64Tc::V_DOT);
                 i->a = bit(ins, 22) ? 3 : 2;
                 i->c = bit(ins, 10);
                 return true;
             }
             if ( (ins & 0xFFE0FC00) == 0x44807800 ) {
                 auto* i = op(bundle, addr, "USDOT.Z", INST_FP_ARITH, dotZ, {}, {}, { rd, rn, rm }, { rd });
+                tc(i, A64Tc::V_DOT);
                 i->a = 2;
                 i->c = 2;
                 return true;
@@ -144,6 +154,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             if ( (ins & 0xFF20F800) == 0x44000800 ) {
                 if ( size == 0 ) return false;
                 auto* i = op(bundle, addr, "QDMLBT", INST_FP_ARITH, accumLong, {}, {}, { rd, rn, rm }, { rd });
+                tc(i, A64Tc::V_MLA);
                 i->a = size;
                 i->c = 16 + bit(ins, 10);
                 return true;
@@ -151,12 +162,14 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             if ( (ins & 0xFF20F000) == 0x44001000 ) {
                 if ( size < 2 ) return false;
                 auto* i = op(bundle, addr, "CDOT.Z", INST_FP_ARITH, cdot, {}, {}, { rd, rn, rm }, { rd });
+                tc(i, A64Tc::V_DOT);
                 i->a = size;
                 i->d = bits(ins, 11, 10);
                 return true;
             }
             if ( (ins & 0xFF20F000) == 0x44002000 || (ins & 0xFF20F000) == 0x44003000 ) {
                 auto* i = op(bundle, addr, "CMLA.Z", INST_FP_ARITH, cmlaZ, {}, {}, { rd, rn, rm }, { rd });
+                tc(i, A64Tc::V_MLA);
                 i->a = size;
                 i->c = bit(ins, 12);
                 i->d = bits(ins, 11, 10);
@@ -168,6 +181,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
                 const uint32_t k = bits(ins, 12, 10);
                 static constexpr uint32_t table[8] = { 4, 5, 6, 7, 8, 9, 10, 11 };
                 auto* i = op(bundle, addr, "MLAL.Z", INST_FP_ARITH, accumLong, {}, {}, { rd, rn, rm }, { rd });
+                tc(i, A64Tc::V_MLA);
                 i->a = size;
                 i->c = table[k];
                 return true;
@@ -175,12 +189,14 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             if ( (ins & 0xFF20F000) == 0x44006000 ) {
                 if ( size == 0 ) return false;
                 auto* i = op(bundle, addr, "QDMLAL.Z", INST_FP_ARITH, accumLong, {}, {}, { rd, rn, rm }, { rd });
+                tc(i, A64Tc::V_MLA);
                 i->a = size;
                 i->c = 12 + bits(ins, 11, 10);
                 return true;
             }
             if ( (ins & 0xFF20F800) == 0x44007000 ) {
                 auto* i = op(bundle, addr, "QRDMLAH.Z", INST_FP_ARITH, sameIndexed, {}, {}, { rn, rm, rd }, { rd });
+                tc(i, A64Tc::V_MLA);
                 i->a = size;
                 i->c = bit(ins, 10) ? 6 : 5;
                 i->d = 1;
@@ -211,6 +227,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         const auto same = [&](uint32_t code, bool accum) {
             auto* i = op(bundle, addr, "SAME.ZE", INST_FP_ARITH, sameIndexed, {}, {},
                 accum ? std::vector<uint16_t> { rn, zm, rd } : std::vector<uint16_t> { rn, zm }, { rd });
+            tc(i, accum ? A64Tc::V_MLA : A64Tc::V_MUL);
             i->a = a;
             i->c = code;
             i->imm = index;
@@ -230,6 +247,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             // SDOT, UDOT by element: S from B with bit 22 = 0 (index 2 bits), D from H with bit 22 = 1 (index 1 bit)
             if ( !bit(ins, 23) ) return false;
             auto* i = op(bundle, addr, "DOT.ZE", INST_FP_ARITH, dotZ, {}, {}, { rd, rn, zm }, { rd });
+            tc(i, A64Tc::V_DOT);
             i->a = a;
             i->c = bit(ins, 10);
             i->d = 1;
@@ -239,6 +257,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         if ( k15 == 0b000110 || k15 == 0b000111 ) {
             if ( (ins & 0xFFE00000) != 0x44A00000 ) return false;
             auto* i = op(bundle, addr, "USDOT.ZE", INST_FP_ARITH, dotZ, {}, {}, { rd, rn, zm }, { rd });
+            tc(i, A64Tc::V_DOT);
             i->a = 2;
             i->c = bit(ins, 10) ? 3 : 2;
             i->d = 1;
@@ -256,6 +275,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             // SMLALB/T, SMLSLB/T, UMLALB/T, UMLSLB/T
             const bool is_u = bit(ins, 12), is_sub = bit(ins, 13);
             auto* i = op(bundle, addr, "MLAL.ZE", INST_FP_ARITH, accumLong, {}, {}, { rd, rn, zm }, { rd });
+            tc(i, A64Tc::V_MLA);
             i->a = wa;
             i->c = (is_sub ? 8u : 4u) + (is_u ? 2u : 0u) + (b10 ? 1u : 0u);
             i->d = 1;
@@ -264,6 +284,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         }
         if ( b1512 == 0b0010 || b1512 == 0b0011 ) {
             auto* i = op(bundle, addr, "QDMLAL.ZE", INST_FP_ARITH, accumLong, {}, {}, { rd, rn, zm }, { rd });
+            tc(i, A64Tc::V_MLA);
             i->a = wa;
             i->c = (b1512 == 0b0011 ? 14u : 12u) + (b10 ? 1u : 0u);
             i->d = 1;
@@ -272,6 +293,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         }
         if ( b1512 == 0b1100 || b1512 == 0b1101 || b1512 == 0b1110 ) {
             auto* i = op(bundle, addr, "MULL.ZE", INST_FP_ARITH, mulLongIndexed, {}, {}, { rn, zm }, { rd });
+            tc(i, A64Tc::V_MUL);
             i->a = wa;
             i->c = (b1512 == 0b1100 ? 0u : b1512 == 0b1101 ? 2u : 4u) + (b10 ? 1u : 0u);
             i->imm = index_long;
@@ -283,6 +305,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         const uint64_t idx_c = bit(ins, 22) ? bit(ins, 20) : bits(ins, 20, 19);
         if ( b1512 == 0b0100 ) {
             auto* i = op(bundle, addr, "CDOT.ZE", INST_FP_ARITH, cdot, {}, {}, { rd, rn, zm_c }, { rd });
+            tc(i, A64Tc::V_DOT);
             i->a = wa;
             i->c = 1;
             i->d = rot;
@@ -291,6 +314,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         }
         if ( b1512 == 0b0110 || b1512 == 0b0111 ) {
             auto* i = op(bundle, addr, "CMLA.ZE", INST_FP_ARITH, cmlaZ, {}, {}, { rd, rn, zm_c }, { rd });
+            tc(i, A64Tc::V_MLA);
             i->a = bit(ins, 22) ? 2 : 1;
             i->c = (b1512 == 0b0111 ? 1u : 0u) | 2u;
             i->d = rot;
@@ -328,11 +352,13 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             (void)k;
             if ( group == 0b01101 && size == 0 ) {
                 auto* i = op(bundle, addr, "PMULL.Q", INST_FP_ARITH, pmull64, {}, {}, { rn, rm }, { rd });
+                tc(i, A64Tc::V_PMULL);
                 i->c = bit(ins, 10);
                 return true;
             }
             if ( size == 0 ) return false;
             auto* i = op(bundle, addr, "WIDEN.Z", INST_FP_ARITH, widening, {}, {}, { rn, rm }, { rd });
+            tc(i, code == 26 ? A64Tc::V_PMULL : code >= 24 ? A64Tc::V_MUL : A64Tc::V_ALU);
             i->a = size;
             i->c = code + (bit(ins, 10) ? 1 : 0);
             return true;
@@ -343,6 +369,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         case 0b100011: {
             if ( size == 0 ) return false;
             auto* i = op(bundle, addr, "WIDEN.BT", INST_FP_ARITH, widening, {}, {}, { rn, rm }, { rd });
+            tc(i, A64Tc::V_ALU);
             i->a = size;
             i->c = b1510 == 0b100000 ? 32 : b1510 == 0b100010 ? 34 : 35;
             return true;
@@ -350,6 +377,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         case 0b100100:
         case 0b100101: {
             auto* i = op(bundle, addr, "EORBT", INST_FP_ARITH, eorInter, {}, {}, { rd, rn, rm }, { rd });
+            tc(i, A64Tc::V_ALU);
             i->a = size;
             i->c = b1510 & 1;
             return true;
@@ -361,6 +389,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             else if ( size == 3 ) code = 1;
             else return false;
             auto* i = op(bundle, addr, "MMLA.Z", INST_FP_ARITH, mmlaZ, {}, {}, { rd, rn, rm }, { rd });
+            tc(i, A64Tc::V_DOT);
             i->c = code;
             return true;
         }
@@ -368,6 +397,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         case 0b101101:
         case 0b101110: {
             auto* i = op(bundle, addr, "BITPERM", INST_FP_ARITH, bitPerm, {}, {}, { rn, rm }, { rd });
+            tc(i, A64Tc::Z_BITPERM);
             i->a = size;
             i->c = b1510 & 3;
             return true;
@@ -381,6 +411,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             const uint32_t narrow = 31 - __builtin_clz(tsh);
             const uint32_t full = (tsh << 3) | bits(ins, 18, 16);
             auto* i = op(bundle, addr, "SHLL.Z", INST_FP_ARITH, shiftLong, {}, {}, { rn }, { rd });
+            tc(i, A64Tc::V_SHIFT);
             i->a = narrow + 1;
             i->c = bits(ins, 11, 10);
             i->imm = full - (8u << narrow);
@@ -390,18 +421,21 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             // SABALB, SABALT, UABALB, UABALT
             if ( size == 0 ) return false;
             auto* i = op(bundle, addr, "ABAL.Z", INST_FP_ARITH, accumLong, {}, {}, { rd, rn, rm }, { rd });
+            tc(i, A64Tc::V_ACCUMULATE);
             i->a = size;
             i->c = bits(ins, 11, 10);
             return true;
         }
         if ( (ins & 0xFFA0F800) == 0x4500D000 || (ins & 0xFFA0F800) == 0x4580D000 ) {
             auto* i = op(bundle, addr, "ADCL.Z", INST_FP_ARITH, adcLong, {}, {}, { rd, rn, rm }, { rd });
+            tc(i, A64Tc::V_ALU);
             i->a = bit(ins, 22) ? 3 : 2;
             i->c = (bit(ins, 23) ? 2u : 0u) + (bit(ins, 10) ? 1u : 0u);
             return true;
         }
         if ( (ins & 0xFF3EF800) == 0x4500D800 ) {
             auto* i = op(bundle, addr, "CADD.Z", INST_FP_ARITH, caddZ, {}, {}, { rd, rn }, { rd });
+            tc(i, A64Tc::V_ALU);
             i->a = size;
             i->c = bit(ins, 16);
             i->d = bit(ins, 10);
@@ -416,6 +450,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             const uint32_t full = (tsz << 3) | bits(ins, 18, 16);
             const bool is_ins = bits(ins, 15, 12) == 0b1111;
             auto* i = op(bundle, addr, "SHIFT.AZ", INST_FP_ARITH, shiftAccum, {}, {}, { rd, rn }, { rd });
+            tc(i, is_ins ? A64Tc::V_SHIFT : A64Tc::V_ACCUMULATE);
             i->a = a;
             if ( is_ins ) {
                 i->c = bit(ins, 10) ? 5 : 4;
@@ -429,6 +464,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         }
         if ( bits(ins, 15, 11) == 0b11111 ) {
             auto* i = op(bundle, addr, "ABA.Z", INST_FP_ARITH, abaZ, {}, {}, { rd, rn, rm }, { rd });
+            tc(i, A64Tc::V_ACCUMULATE);
             i->a = size;
             i->d = bit(ins, 10);
             return true;
@@ -449,6 +485,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         const bool top = bit(ins, 10);
         auto* i = op(bundle, addr, "NARROW.ZS", INST_FP_ARITH, narrowing, {}, {},
             top ? std::vector<uint16_t> { rn, rd } : std::vector<uint16_t> { rn }, { rd });
+        tc(i, code == 4 ? A64Tc::V_SHIFT : A64Tc::V_SHIFT_COMPLEX);
         i->a = narrow + 1;
         i->c = static_cast<uint32_t>(code);
         i->d = top;
@@ -466,6 +503,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         const bool top = bit(ins, 10);
         auto* i = op(bundle, addr, "NARROW.ZX", INST_FP_ARITH, narrowing, {}, {},
             top ? std::vector<uint16_t> { rn, rd } : std::vector<uint16_t> { rn }, { rd });
+        tc(i, A64Tc::V_SAT_NARROW);
         i->a = narrow + 1;
         i->c = 12 + k;
         i->d = top;
@@ -477,6 +515,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         const bool top = bit(ins, 10);
         auto* i = op(bundle, addr, "NARROW.ZB", INST_FP_ARITH, narrowing, {}, {},
             top ? std::vector<uint16_t> { rn, rm, rd } : std::vector<uint16_t> { rn, rm }, { rd });
+        tc(i, A64Tc::V_ALU);
         i->a = size;
         i->c = bits(ins, 12, 11);
         i->d = top;
@@ -486,23 +525,24 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
         // MATCH, NMATCH
         if ( size > 1 ) return false;
         auto* i = op(bundle, addr, "MATCH", INST_FP_ARITH, matchZ, {}, { A64Reg::NZCV }, { pg, rn, rm }, { a64Pred(bits(ins, 3, 0)) });
+        tc(i, A64Tc::Z_MATCH);
         i->a = size;
         i->c = bit(ins, 4);
         return true;
     }
     if ( (ins & 0xFF20FC00) == 0x4520A000 ) {
         if ( size != 0 ) return false;
-        op(bundle, addr, "HISTSEG", INST_FP_ARITH, histseg, {}, {}, { rn, rm }, { rd });
+        tc(op(bundle, addr, "HISTSEG", INST_FP_ARITH, histseg, {}, {}, { rn, rm }, { rd }), A64Tc::V_ALU);
         return true;
     }
     if ( (ins & 0xFF20E000) == 0x4520C000 ) {
         if ( size < 2 ) return false;
-        op(bundle, addr, "HISTCNT", INST_FP_ARITH, histcnt, {}, {}, { pg, rn, rm }, { rd })->a = size;
+        tc(op(bundle, addr, "HISTCNT", INST_FP_ARITH, histcnt, {}, {}, { pg, rn, rm }, { rd }), A64Tc::V_ALU)->a = size;
         return true;
     }
     if ( b1513 == 7 ) {
         const auto crypto = [&](uint32_t code, std::vector<uint16_t> src) {
-            op(bundle, addr, "CRYPTO.Z", INST_FP_ARITH, cryptoZ, {}, {}, src, { rd })->c = code;
+            tc(op(bundle, addr, "CRYPTO.Z", INST_FP_ARITH, cryptoZ, {}, {}, src, { rd }), code <= 3 ? A64Tc::CRYPTO_AES : code == 6 ? A64Tc::CRYPTO_SHA3 : A64Tc::CRYPTO_SHA_SLOW)->c = code;
             return true;
         };
         switch ( ins & 0xFFFFFC00 ) {

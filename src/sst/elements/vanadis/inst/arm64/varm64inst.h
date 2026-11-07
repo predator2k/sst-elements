@@ -115,6 +115,38 @@ public:
     VanadisArm64Inst* clone() override { return new VanadisArm64Inst(*this); }
 
     VanadisFunctionalUnitType getInstFuncType() const override { return unit; }
+    // The timing class of the micro-op chooses its functional unit.
+    void setUnit(const VanadisFunctionalUnitType u) { unit = u; }
+
+    // An integer divide (dp2 UDIV, SDIV): sources 0 and 1 are the dividend and the divisor, a is the 64-bit form and b
+    // the kind. The divider retires divide_bits_per_cycle quotient bits per cycle above its base latency: the base alone
+    // when the divisor is a power of two or longer than the dividend, at least one more cycle otherwise.
+    uint16_t dynamicLatency(VanadisRegisterFile* rf) const override
+    {
+        const VanadisTimingRecord* t = getTiming();
+        if ( t->dynamic != VanadisTimingDynamic::INTEGER_DIVIDE || countISAIntRegIn() < 2 ) return t->latency;
+        uint64_t n = rf->getIntReg<uint64_t>(phys_int_regs_in[0]);
+        uint64_t m = rf->getIntReg<uint64_t>(phys_int_regs_in[1]);
+        const bool is64 = a != 0;
+        const bool is_signed = b == divide_signed_kind;
+        if ( ! is64 ) {
+            n &= 0xFFFFFFFFull;
+            m &= 0xFFFFFFFFull;
+        }
+        if ( is_signed ) {
+            const int64_t sn = is64 ? static_cast<int64_t>(n) : static_cast<int64_t>(static_cast<int32_t>(n));
+            const int64_t sm = is64 ? static_cast<int64_t>(m) : static_cast<int64_t>(static_cast<int32_t>(m));
+            n = sn < 0 ? 0 - static_cast<uint64_t>(sn) : static_cast<uint64_t>(sn);
+            m = sm < 0 ? 0 - static_cast<uint64_t>(sm) : static_cast<uint64_t>(sm);
+        }
+        if ( m == 0 || ( m & (m - 1) ) == 0 || n == 0 ) return t->latency;
+        const int bits_n = 64 - __builtin_clzll(n), bits_m = 64 - __builtin_clzll(m);
+        if ( bits_n < bits_m ) return t->latency;
+        const int extra = (bits_n - bits_m) / t->divide_bits_per_cycle;
+        return static_cast<uint16_t>(t->latency + (extra < 1 ? 1 : extra));
+    }
+    // The payload value b of a signed divide; set by the decoder.
+    uint32_t divide_signed_kind = 0xFFFFFFFF;
     const char*               getInstCode() const override { return name; }
 
     void printToBuffer(char* buffer, size_t buffer_size) override

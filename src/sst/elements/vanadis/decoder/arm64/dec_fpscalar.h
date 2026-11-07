@@ -63,6 +63,7 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
             { rn16, rm16, static_cast<uint16_t>(bits(ins, 14, 10)) }, { rd16 });
         i->a = fmt;
         i->c = (static_cast<uint32_t>(bit(ins, 21)) << 1) | static_cast<uint32_t>(bit(ins, 15));
+        tc(i, A64Tc::FP_MLA);
         markMultiplyAdd(i, 2);
         return true;
     }
@@ -73,8 +74,8 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
         if ( fmt == 0 || (!sf && !(scale & 0x20)) ) return false;
         const uint32_t fbits = 64 - scale;
         if ( rmode == 3 && opcode <= 1 ) {
-            auto* i = fpOp(bundle, addr, "FCVTZ.FIX", INST_FP_ARITH, fpToGp, { A64Reg::FPCR },
-                { rd == 31 ? A64Reg::T1 : rd16 }, { rn16 }, {});
+            auto* i = tc(fpOp(bundle, addr, "FCVTZ.FIX", INST_FP_ARITH, fpToGp, { A64Reg::FPCR },
+                { rd == 31 ? A64Reg::T1 : rd16 }, { rn16 }, {}), A64Tc::FP_CVT_TO_GP);
             i->a = fmt;
             i->b = static_cast<uint32_t>(A64Fp::Rounding::ZERO);
             i->c = fbits;
@@ -82,7 +83,7 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
             return true;
         }
         if ( rmode == 0 && (opcode == 2 || opcode == 3) ) {
-            auto* i = fpOp(bundle, addr, "CVTF.FIX", INST_FP_ARITH, gpToFp, { A64Reg::FPCR, rz(rn) }, {}, {}, { rd16 });
+            auto* i = tc(fpOp(bundle, addr, "CVTF.FIX", INST_FP_ARITH, gpToFp, { A64Reg::FPCR, rz(rn) }, {}, {}, { rd16 }), A64Tc::FP_CVT_FROM_GP);
             i->a = fmt;
             i->c = fbits;
             i->d = (opcode == 2 ? 1u : 0u) | (sf ? 2u : 0u);
@@ -95,8 +96,8 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
     if ( lo2 == 1 ) {
         // conditional compare
         if ( sf || fmt == 0 ) return false;
-        auto* i = fpOp(bundle, addr, "FCCMP", INST_FP_ARITH, fpCondCompare, { A64Reg::FPCR, A64Reg::NZCV }, { A64Reg::NZCV },
-            { rn16, rm16 }, {});
+        auto* i = tc(fpOp(bundle, addr, "FCCMP", INST_FP_ARITH, fpCondCompare, { A64Reg::FPCR, A64Reg::NZCV }, { A64Reg::NZCV },
+            { rn16, rm16 }, {}), A64Tc::FP_CMP);
         i->a = fmt;
         i->c = bits(ins, 15, 12);
         i->d = bit(ins, 4);
@@ -110,11 +111,12 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
         i->a = fmt;
         i->c = opcode;
         if ( opcode == 0 || opcode == 8 ) i->setExtraExecuteCycles(fp_mul_extra_cycles);    // FMUL, FNMUL
+        tc(i, opcode == 1 ? fpDivClass(fmt) : (opcode == 0 || opcode == 8) ? A64Tc::FP_MUL : A64Tc::FP_ALU);
         return true;
     }
     if ( lo2 == 3 ) {
         if ( sf || fmt == 0 ) return false;
-        auto* i = fpOp(bundle, addr, "FCSEL", INST_FP_ARITH, fpCondSelect, { A64Reg::NZCV }, {}, { rn16, rm16 }, { rd16 });
+        auto* i = tc(fpOp(bundle, addr, "FCSEL", INST_FP_ARITH, fpCondSelect, { A64Reg::NZCV }, {}, { rn16, rm16 }, { rd16 }), A64Tc::FP_ALU);
         i->a = fmt;
         i->c = bits(ins, 15, 12);
         return true;
@@ -125,8 +127,8 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
         const uint32_t rmode = bits(ins, 20, 19), opcode = bits(ins, 18, 16);
         if ( opcode == 6 || opcode == 7 ) {
             if ( !sf && ftype == 1 && rmode == 3 && opcode == 6 ) {
-                auto* i = fpOp(bundle, addr, "FJCVTZS", INST_FP_ARITH, fpJsConvert, { A64Reg::FPCR },
-                    { rd == 31 ? A64Reg::T1 : rd16, A64Reg::NZCV }, { rn16 }, {});
+                auto* i = tc(fpOp(bundle, addr, "FJCVTZS", INST_FP_ARITH, fpJsConvert, { A64Reg::FPCR },
+                    { rd == 31 ? A64Reg::T1 : rd16, A64Reg::NZCV }, { rn16 }, {}), A64Tc::FP_CVT_TO_GP);
                 i->a = 3;
                 return true;
             }
@@ -138,14 +140,16 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
             else if ( rmode == 0 && ftype == 3 ) bytes = 2;
             if ( bytes == 0 ) return false;
             if ( opcode == 6 ) {
-                auto* i = op(bundle, addr, "FMOV.TOGP", INST_INT_ARITH, fpMoveToGp, {}, { rd == 31 ? A64Reg::T1 : rd16 }, { rn16 }, {});
+                auto* i = tc(op(bundle, addr, "FMOV.TOGP", INST_INT_ARITH, fpMoveToGp, {}, { rd == 31 ? A64Reg::T1 : rd16 }, { rn16 }, {}),
+                    A64Tc::FP_MOVE_TO_GP);
                 i->setExtraExecuteCycles(gp_fp_transfer_extra_cycles);
                 i->a = bytes;
                 i->c = high ? 8 : 0;
             }
             else {
-                auto* i = op(bundle, addr, "FMOV.FROMGP", INST_INT_ARITH, fpMoveFromGp, { rz(rn) }, {},
-                    high ? std::vector<uint16_t> { rd16 } : std::vector<uint16_t> {}, { rd16 });
+                auto* i = tc(op(bundle, addr, "FMOV.FROMGP", INST_INT_ARITH, fpMoveFromGp, { rz(rn) }, {},
+                    high ? std::vector<uint16_t> { rd16 } : std::vector<uint16_t> {}, { rd16 }),
+                    high ? A64Tc::FP_INSERT_FROM_GP : A64Tc::FP_MOVE_FROM_GP);
                 i->setExtraExecuteCycles(gp_fp_transfer_extra_cycles);
                 i->a = bytes;
                 i->d = high;
@@ -155,7 +159,7 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
         if ( fmt == 0 ) return false;
         if ( opcode == 2 || opcode == 3 ) {
             if ( rmode != 0 ) return false;
-            auto* i = fpOp(bundle, addr, "CVTF", INST_FP_ARITH, gpToFp, { A64Reg::FPCR, rz(rn) }, {}, {}, { rd16 });
+            auto* i = tc(fpOp(bundle, addr, "CVTF", INST_FP_ARITH, gpToFp, { A64Reg::FPCR, rz(rn) }, {}, {}, { rd16 }), A64Tc::FP_CVT_FROM_GP);
             i->a = fmt;
             i->d = (opcode == 2 ? 1u : 0u) | (sf ? 2u : 0u);
             return true;
@@ -170,7 +174,8 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
             if ( rmode != 0 ) return false;
             r = A64Fp::Rounding::TIEAWAY;
         }
-        auto* i = fpOp(bundle, addr, "FCVT.TOGP", INST_FP_ARITH, fpToGp, { A64Reg::FPCR }, { rd == 31 ? A64Reg::T1 : rd16 }, { rn16 }, {});
+        auto* i = tc(fpOp(bundle, addr, "FCVT.TOGP", INST_FP_ARITH, fpToGp, { A64Reg::FPCR }, { rd == 31 ? A64Reg::T1 : rd16 }, { rn16 }, {}),
+            A64Tc::FP_CVT_TO_GP);
         i->a = fmt;
         i->b = static_cast<uint32_t>(r);
         i->d = ((opcode & 1) == 0 ? 1u : 0u) | (sf ? 2u : 0u);
@@ -184,7 +189,7 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
         const uint32_t opcode = bits(ins, 20, 15);
         if ( opcode == 6 ) {
             if ( ftype != 1 ) return false;
-            auto* i = fpOp(bundle, addr, "BFCVT", INST_FP_ARITH, fpDp1, { A64Reg::FPCR }, {}, { rn16 }, { rd16 });
+            auto* i = tc(fpOp(bundle, addr, "BFCVT", INST_FP_ARITH, fpDp1, { A64Reg::FPCR }, {}, { rn16 }, { rd16 }), A64Tc::BF_CVT);
             i->a = 2;
             i->c = 6;
             return true;
@@ -199,6 +204,8 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
         if ( !valid ) return false;
         auto* i = fpOp(bundle, addr, opcode == 3 ? "FSQRT" : "FDP1", opcode == 3 ? INST_FP_DIV : INST_FP_ARITH, fpDp1,
             { A64Reg::FPCR }, {}, { rn16 }, { rd16 });
+        // FMOV, FABS, FNEG; FSQRT; the conversions between precisions and the roundings to integral.
+        tc(i, opcode <= 2 ? A64Tc::FP_ALU : opcode == 3 ? fpDivClass(fmt) : A64Tc::FP_CVT);
         i->a = fmt;
         i->c = opcode;
         return true;
@@ -209,8 +216,8 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
         if ( fmt == 0 || bits(ins, 15, 14) != 0 || (opcode2 & 7) != 0 ) return false;
         const bool with_zero = opcode2 & 8;
         if ( with_zero && rm != 0 ) return false;
-        auto* i = fpOp(bundle, addr, "FCMP", INST_FP_ARITH, fpCompare, { A64Reg::FPCR }, { A64Reg::NZCV },
-            with_zero ? std::vector<uint16_t> { rn16 } : std::vector<uint16_t> { rn16, rm16 }, {});
+        auto* i = tc(fpOp(bundle, addr, "FCMP", INST_FP_ARITH, fpCompare, { A64Reg::FPCR }, { A64Reg::NZCV },
+            with_zero ? std::vector<uint16_t> { rn16 } : std::vector<uint16_t> { rn16, rm16 }, {}), A64Tc::FP_CMP);
         i->a = fmt;
         i->d = (opcode2 & 0x10 ? 1u : 0u) | (with_zero ? 2u : 0u);
         return true;
@@ -219,7 +226,7 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
         // immediate
         if ( fmt == 0 || bits(ins, 9, 5) != 0 ) return false;
         const uint32_t imm8 = bits(ins, 20, 13);
-        auto* i = op(bundle, addr, "FMOV.IMM", INST_FP_ARITH, fpImmediate, {}, {}, {}, { rd16 });
+        auto* i = tc(op(bundle, addr, "FMOV.IMM", INST_FP_ARITH, fpImmediate, {}, {}, {}, { rd16 }), A64Tc::FP_ALU);
         i->a = fmt;
         i->imm = fmt == 1 ? a64FpExpandImm(imm8, 5, 10) : fmt == 2 ? a64FpExpandImm(imm8, 8, 23) : a64FpExpandImm(imm8, 11, 52);
         return true;
@@ -269,13 +276,13 @@ VanadisARM64Decoder::decodeSimdStructure(uint64_t addr, uint32_t ins, VanadisIns
             for ( uint32_t k = 0; k < selem; ++k ) vl.push_back(vreg(k));
             if ( L ) {
                 for ( uint32_t k = 0; k < selem; ++k ) loadFp(bundle, addr, base, k * reg_bytes, temps[k], reg_bytes);
-                auto* i = op(bundle, addr, "UNZIPN", INST_FP_ARITH, structDeinterleave, {}, {}, tl, vl);
+                auto* i = tc(op(bundle, addr, "UNZIPN", INST_FP_ARITH, structDeinterleave, {}, {}, tl, vl), A64Tc::V_STRUCT_PERMUTE);
                 i->a = ebytes;
                 i->b = reg_bytes;
                 i->c = selem;
             }
             else {
-                auto* i = op(bundle, addr, "ZIPN", INST_FP_ARITH, structInterleave, {}, {}, vl, tl);
+                auto* i = tc(op(bundle, addr, "ZIPN", INST_FP_ARITH, structInterleave, {}, {}, vl, tl), A64Tc::V_STRUCT_PERMUTE);
                 i->a = ebytes;
                 i->b = reg_bytes;
                 i->c = selem;
@@ -320,18 +327,18 @@ VanadisARM64Decoder::decodeSimdStructure(uint64_t addr, uint32_t ins, VanadisIns
             if ( L ) {
                 loadFp(bundle, addr, base, k * ebytes, temps[k], ebytes);
                 if ( replicate ) {
-                    auto* i = op(bundle, addr, "LDR.REP", INST_FP_ARITH, laneReplicate, {}, {}, { temps[k] }, { vreg(k) });
+                    auto* i = tc(op(bundle, addr, "LDR.REP", INST_FP_ARITH, laneReplicate, {}, {}, { temps[k] }, { vreg(k) }), A64Tc::V_MISC);
                     i->a = ebytes;
                     i->b = reg_bytes;
                 }
                 else {
-                    auto* i = op(bundle, addr, "LD.LANE", INST_FP_ARITH, laneInsert, {}, {}, { vreg(k), temps[k] }, { vreg(k) });
+                    auto* i = tc(op(bundle, addr, "LD.LANE", INST_FP_ARITH, laneInsert, {}, {}, { vreg(k), temps[k] }, { vreg(k) }), A64Tc::V_MISC);
                     i->a = ebytes;
                     i->c = index * ebytes;
                 }
             }
             else {
-                auto* i = op(bundle, addr, "ST.LANE", INST_FP_ARITH, laneExtract, {}, {}, { vreg(k) }, { temps[k] });
+                auto* i = tc(op(bundle, addr, "ST.LANE", INST_FP_ARITH, laneExtract, {}, {}, { vreg(k) }, { temps[k] }), A64Tc::V_MISC);
                 i->a = ebytes;
                 i->c = index * ebytes;
                 storeFp(bundle, addr, base, k * ebytes, temps[k], ebytes);
@@ -343,9 +350,9 @@ VanadisARM64Decoder::decodeSimdStructure(uint64_t addr, uint32_t ins, VanadisIns
             addImmTo(bundle, addr, base, base, total);
         }
         else {
-            op(bundle, addr, "POSTREG", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+            tc(op(bundle, addr, "POSTREG", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
                 o.setX(rf, 0, o.X(rf, 0) + o.X(rf, 1));
-            }, { base, rz(rm) }, { base });
+            }, { base, rz(rm) }, { base }), A64Tc::INT_ALU);
         }
     }
     return true;

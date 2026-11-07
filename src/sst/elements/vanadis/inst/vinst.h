@@ -20,6 +20,7 @@
 #include "inst/regfile.h"
 #include "inst/regstack.h"
 #include "inst/vinsttype.h"
+#include "inst/vtiming.h"
 #include "inst/vregfmt.h"
 
 #include <cstring>
@@ -85,6 +86,11 @@ class VanadisInstruction
             accumulator_fp_reg_in_ = NO_ACCUMULATOR;
             accumulator_cycles_   = 0;
             accumulator_ready_cycle_ = 0;
+            accumulator_int_reg_in_ = NO_ACCUMULATOR;
+            timing_               = nullptr;
+            dynamic_cycles_       = 0;
+            issue_cycle_          = 0;
+            executed_cycle_       = 0;
             end_uop_group_        = false;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -126,6 +132,11 @@ class VanadisInstruction
             accumulator_fp_reg_in_ = copy_me.accumulator_fp_reg_in_;
             accumulator_cycles_   = copy_me.accumulator_cycles_;
             accumulator_ready_cycle_ = copy_me.accumulator_ready_cycle_;
+            accumulator_int_reg_in_ = copy_me.accumulator_int_reg_in_;
+            timing_               = copy_me.timing_;
+            dynamic_cycles_       = copy_me.dynamic_cycles_;
+            issue_cycle_          = copy_me.issue_cycle_;
+            executed_cycle_       = copy_me.executed_cycle_;
             end_uop_group_        = copy_me.end_uop_group_;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -449,6 +460,27 @@ class VanadisInstruction
         uint16_t getAccumulatorCycles() const { return accumulator_cycles_; }
         void setAccumulatorReadyCycle(const uint64_t cycle) { accumulator_ready_cycle_ = cycle; }
         uint64_t getAccumulatorReadyCycle() const { return accumulator_ready_cycle_; }
+        // The integer input that is the accumulator, for integer multiply-adds and CRC.
+        void setAccumulatorIntRegIn(const uint16_t index) { accumulator_int_reg_in_ = index; }
+        uint16_t getAccumulatorIntRegIn() const { return accumulator_int_reg_in_; }
+        void setAccumulatorCycles(const uint16_t cycles) { accumulator_cycles_ = cycles; }
+
+        // The timing class of the micro-op, nullptr for the latency of its functional unit.
+        const VanadisTimingRecord* getTiming() const { return timing_; }
+        void setTiming(const VanadisTimingRecord* record) { timing_ = record; }
+        // Latency from issue to the issue of a consumer, with a dynamic latency found at issue.
+        uint16_t getTimedLatency() const
+        {
+            return timing_->dynamic == VanadisTimingDynamic::FIXED ? timing_->latency : dynamic_cycles_;
+        }
+        // Found at issue for a dynamic class; the registers hold the operands then.
+        virtual uint16_t dynamicLatency(VanadisRegisterFile* regFile) const { return timing_->latency; }
+        void setDynamicCycles(const uint16_t cycles) { dynamic_cycles_ = cycles; }
+        // The cycle the micro-op issued and the cycle it executed, for the timing of its consumers.
+        void setIssueCycle(const uint64_t cycle) { issue_cycle_ = cycle; }
+        uint64_t getIssueCycle() const { return issue_cycle_; }
+        void setExecutedCycle(const uint64_t cycle) { executed_cycle_ = cycle; }
+        uint64_t getExecutedCycle() const { return executed_cycle_; }
 
         // With rename_at_dispatch a store issues when its address is known; these inputs are read when it goes to memory.
         virtual bool isStoreDataIntRegIn(const uint16_t index) const { return false; }
@@ -513,6 +545,11 @@ class VanadisInstruction
         uint16_t accumulator_fp_reg_in_;
         uint16_t accumulator_cycles_;
         uint64_t accumulator_ready_cycle_;
+        uint16_t accumulator_int_reg_in_;
+        const VanadisTimingRecord* timing_;
+        uint16_t dynamic_cycles_;
+        uint64_t issue_cycle_;
+        uint64_t executed_cycle_;
         bool end_uop_group_;
         bool is_front_of_rob_;
         bool has_rob_slot_;

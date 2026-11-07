@@ -34,12 +34,64 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace SST {
 namespace Vanadis {
 
 struct A64SveDtype;
+
+// Timing classes of the A64 micro-ops. A class groups the instruction groups of a core's optimization guide that share a
+// latency, a set of pipes and an issue interval. The core file gives one record per class (timing_classes); without a
+// table every micro-op keeps the latency of its functional unit.
+#define A64_TIMING_CLASSES(X)                                                                                              \
+    X(INT_ALU, "int_alu") X(INT_ALU_FLAGS, "int_alu_flags") X(INT_ALU_SHIFT, "int_alu_shift") X(INT_BFM, "int_bfm")      \
+    X(INT_EXTR, "int_extr") X(INT_MOVE_ZERO, "int_move_zero") X(INT_INTERNAL, "int_internal") X(INT_MUL, "int_mul")        \
+    X(INT_MADD, "int_madd") X(INT_MULH, "int_mulh") X(INT_DIV, "int_div") X(INT_CRC, "int_crc")                          \
+    X(FP_ALU, "fp_alu") X(FP_MUL, "fp_mul") X(FP_MLA, "fp_mla") X(FP_CMP, "fp_cmp") X(FP_PAIRWISE, "fp_pairwise")         \
+    X(FP_CVT, "fp_cvt") X(FP_CVT_S, "fp_cvt_s") X(FP_CVT_H, "fp_cvt_h") X(FP_CVT_TO_GP, "fp_cvt_to_gp")                 \
+    X(FP_CVT_FROM_GP, "fp_cvt_from_gp") X(FP_MOVE_FROM_GP, "fp_move_from_gp") X(FP_INSERT_FROM_GP, "fp_insert_from_gp")  \
+    X(FP_MOVE_TO_GP, "fp_move_to_gp") X(FP_RECPS, "fp_recps") X(FP_REDUCE, "fp_reduce") X(FP_COMPLEX_MLA, "fp_complex_mla") \
+    X(FP_DIVSQRT_H, "fp_divsqrt_h") X(FP_DIVSQRT_S, "fp_divsqrt_s") X(FP_DIVSQRT_D, "fp_divsqrt_d")                       \
+    X(V_DIVSQRT_4H, "v_divsqrt_4h") X(V_DIVSQRT_2S, "v_divsqrt_2s") X(V_DIVSQRT_8H, "v_divsqrt_8h")                       \
+    X(V_DIVSQRT_4S, "v_divsqrt_4s") X(V_DIVSQRT_2D, "v_divsqrt_2d")                                                       \
+    X(V_ALU, "v_alu") X(V_MISC, "v_misc") X(V_SHIFT, "v_shift") X(V_SHIFT_COMPLEX, "v_shift_complex")                     \
+    X(V_SAT_NARROW, "v_sat_narrow") X(V_ACCUMULATE, "v_accumulate") X(V_REDUCE_S, "v_reduce_s") X(V_REDUCE_H, "v_reduce_h") \
+    X(V_REDUCE_B, "v_reduce_b") X(V_MUL, "v_mul") X(V_MLA, "v_mla") X(V_DOT, "v_dot") X(V_PMULL, "v_pmull")               \
+    X(V_TBL_LONG, "v_tbl_long") X(V_STRUCT_PERMUTE, "v_struct_permute")                                                   \
+    X(CRYPTO_AES, "crypto_aes") X(CRYPTO_SHA_FAST, "crypto_sha_fast") X(CRYPTO_SHA_SLOW, "crypto_sha_slow")               \
+    X(CRYPTO_SHA3, "crypto_sha3") X(BF_DOT, "bf_dot") X(BF_MMLA, "bf_mmla") X(BF_CVT, "bf_cvt")                            \
+    X(Z_CMP, "z_cmp") X(Z_DUP_GP, "z_dup_gp") X(Z_CPY_GP, "z_cpy_gp") X(Z_INDEX_IMM, "z_index_imm")                       \
+    X(Z_INDEX_GP, "z_index_gp") X(Z_INSR_GP, "z_insr_gp") X(Z_LAST_GP, "z_last_gp") X(Z_LAST_V, "z_last_v")               \
+    X(Z_CLAST_GP, "z_clast_gp") X(Z_COMPACT, "z_compact") X(Z_MATCH, "z_match") X(Z_BITPERM, "z_bitperm")                 \
+    X(Z_DIV, "z_div") X(Z_REDUCE_ADD_B, "z_reduce_add_b") X(Z_REDUCE_ADD_H, "z_reduce_add_h")                             \
+    X(Z_REDUCE_ADD_S, "z_reduce_add_s") X(Z_REDUCE_ADD_D, "z_reduce_add_d") X(Z_REDUCE_MINMAX, "z_reduce_minmax")         \
+    X(Z_REDUCE_LOGIC, "z_reduce_logic") X(ZF_REDUCE_H, "zf_reduce_h") X(ZF_REDUCE_S, "zf_reduce_s")                       \
+    X(ZF_REDUCE_D, "zf_reduce_d") X(ZF_ADDA_H, "zf_adda_h") X(ZF_ADDA_S, "zf_adda_s") X(ZF_ADDA_D, "zf_adda_d")           \
+    X(Z_CVT_D, "z_cvt_d") X(Z_CVT_S, "z_cvt_s") X(Z_CVT_H, "z_cvt_h") X(ZF_FEXPA, "zf_fexpa")                             \
+    X(Z_COUNT_GP, "z_count_gp") X(P_LOGIC, "p_logic") X(P_SET, "p_set") X(P_TEST, "p_test") X(P_WHILE, "p_while")         \
+    X(P_COUNT, "p_count") X(P_COUNT_VECTOR, "p_count_vector") X(P_PERMUTE, "p_permute") X(P_BREAK, "p_break")             \
+    X(P_BREAK_PROPAGATE, "p_break_propagate") X(P_FIRST, "p_first") X(P_FFR_READ, "p_ffr_read") X(P_FFR_WRITE, "p_ffr_write") \
+    X(SVE_GATHER_MERGE, "sve_gather_merge")
+
+enum class A64Tc : uint16_t {
+#define A64_TC_ENUM(id, name) id,
+    A64_TIMING_CLASSES(A64_TC_ENUM)
+#undef A64_TC_ENUM
+    COUNT
+};
+
+inline const char*
+a64TimingClassName(const A64Tc c)
+{
+    static const char* names[] = {
+#define A64_TC_NAME(id, name) name,
+        A64_TIMING_CLASSES(A64_TC_NAME)
+#undef A64_TC_NAME
+    };
+    return names[static_cast<uint16_t>(c)];
+}
 
 // A64 decoder of the Vanadis core: EL0 only, little-endian. decode() walks the top-level encoding
 // groups of the A64 instruction set; each group is a member function. One instruction becomes one
@@ -72,6 +124,10 @@ public:
         { "fp_accumulator_cycles", "Cycles from the issue of a multiply-add until another multiply-add can take its result as the accumulator; 0 is no bypass", "0" },
         { "gp_fp_transfer_extra_cycles", "Cycles a move between a general register and a vector register takes above the latency of the integer unit", "0" },
         { "core_hz", "Core clock, Hz; CNTVCT_EL0 is the cycle count scaled by counter_hz / core_hz", "1000000000" },
+        { "timing_classes", "Timing table: one string per class, 'name unit pipe_mask latency issue_interval accumulator_cycles "
+                            "region_out region_in dynamic divide_bits_per_cycle'; unit is int, fp, int_div or fp_div, dynamic is "
+                            "fixed or integer_divide. Empty keeps the latency of each micro-op's functional unit", "[]" },
+        { "taken_branches_per_cycle", "Predicted-taken branches the front end follows per cycle; 0 is no limit", "0" },
         { "unimplemented_as_nop", "Test aid: decode an instruction the decoder does not implement as a no-op and print "
                                   "its word, instead of a decode fault", "0" })
 
@@ -90,6 +146,8 @@ public:
         fp_accumulator_cycles    = params.find<uint16_t>("fp_accumulator_cycles", 0);
         gp_fp_transfer_extra_cycles = params.find<uint16_t>("gp_fp_transfer_extra_cycles", 0);
         core_hz           = params.find<uint64_t>("core_hz", 1000000000ull);
+        taken_branches_per_cycle = params.find<uint32_t>("taken_branches_per_cycle", 0);
+        readTimingTable(params);
         options           = new VanadisDecoderOptions(
             A64Reg::NO_ZERO_REG, A64Reg::INT_COUNT, A64Reg::FP_COUNT, /* syscall code */ 8, VANADIS_REGISTER_MODE_FP64,
             static_cast<uint16_t>(vector_bytes), /* FP load fills upper bytes with */ 0);
@@ -131,6 +189,12 @@ public:
     {
         cycle_count  = cycle;
         bool success = false;
+        if ( cycle != taken_cycle_ ) {
+            taken_cycle_ = cycle;
+            taken_this_cycle_ = 0;
+        }
+        // The front end follows taken_branches_per_cycle predicted-taken branches per cycle.
+        if ( taken_branches_per_cycle > 0 && taken_this_cycle_ >= taken_branches_per_cycle ) return false;
         if ( !thread_rob->full() ) {
             if ( ins_loader->hasBundleAt(ip) ) {
                 stat_uop_hit->addData(1);
@@ -150,6 +214,7 @@ public:
                             const uint64_t predicted_address =
                                 branch_predictor->predictNext(ip, ip + bundle->pcIncrement(), next_spec_ins->getBranchClass());
                             next_spec_ins->setSpeculatedAddress(predicted_address);
+                            if ( predicted_address != ip + bundle->pcIncrement() ) taken_this_cycle_++;
                             ip                = predicted_address;
                             bundle_has_branch = true;
                         }
@@ -221,7 +286,191 @@ protected:
     void markMultiplyAdd(VanadisArm64Inst* i, const uint16_t accumulator)
     {
         i->setExtraExecuteCycles(fp_mla_extra_cycles);
-        i->setAccumulatorFPRegIn(accumulator, fp_accumulator_cycles);
+        i->setAccumulatorFPRegIn(accumulator, timing_given_ ? i->getAccumulatorCycles() : fp_accumulator_cycles);
+    }
+
+    // The timing table: one record and one functional unit per class, read from timing_classes.
+    bool                                   timing_given_ = false;
+    std::vector<VanadisTimingRecord>       timing_records_;
+    std::vector<VanadisFunctionalUnitType> timing_units_;
+    uint32_t                               taken_branches_per_cycle = 0;
+    uint32_t                               taken_this_cycle_ = 0;
+    uint64_t                               taken_cycle_ = UINT64_MAX;
+
+    void readTimingTable(SST::Params& params)
+    {
+        std::vector<std::string> rows;
+        params.find_array<std::string>("timing_classes", rows);
+        if ( rows.empty() ) return;
+        const uint16_t count = static_cast<uint16_t>(A64Tc::COUNT);
+        timing_records_.assign(count, VanadisTimingRecord{});
+        timing_units_.assign(count, INST_NOOP);
+        std::vector<bool> seen(count, false);
+        for ( const std::string& row : rows ) {
+            char name[64], unit[16], dynamic[32];
+            unsigned mask = 0, latency = 0, interval = 0, accumulator = 0, region_out = 0, region_in = 0, bits = 0;
+            if ( 10 != sscanf(row.c_str(), "%63s %15s %u %u %u %u %u %u %31s %u", name, unit, &mask, &latency, &interval,
+                            &accumulator, &region_out, &region_in, dynamic, &bits) ) {
+                output_->fatal(CALL_INFO, -1, "timing_classes: cannot read '%s'\n", row.c_str());
+            }
+            uint16_t id = count;
+            for ( uint16_t c = 0; c < count; ++c ) {
+                if ( 0 == strcmp(name, a64TimingClassName(static_cast<A64Tc>(c))) ) id = c;
+            }
+            if ( id == count ) output_->fatal(CALL_INFO, -1, "timing_classes: no class '%s'\n", name);
+            VanadisTimingRecord& r = timing_records_[id];
+            r.latency = static_cast<uint16_t>(latency);
+            r.pipe_mask = mask;
+            r.issue_interval = static_cast<uint16_t>(interval);
+            r.accumulator_cycles = static_cast<uint16_t>(accumulator);
+            r.region_out = static_cast<uint8_t>(region_out);
+            r.region_in = static_cast<uint8_t>(region_in);
+            r.divide_bits_per_cycle = static_cast<uint16_t>(bits);
+            if ( 0 == strcmp(dynamic, "integer_divide") ) r.dynamic = VanadisTimingDynamic::INTEGER_DIVIDE;
+            else if ( 0 != strcmp(dynamic, "fixed") ) output_->fatal(CALL_INFO, -1, "timing_classes: %s: dynamic '%s'\n", name, dynamic);
+            if ( 0 == strcmp(unit, "int") ) timing_units_[id] = INST_INT_ARITH;
+            else if ( 0 == strcmp(unit, "fp") ) timing_units_[id] = INST_FP_ARITH;
+            else if ( 0 == strcmp(unit, "int_div") ) timing_units_[id] = INST_INT_DIV;
+            else if ( 0 == strcmp(unit, "fp_div") ) timing_units_[id] = INST_FP_DIV;
+            else output_->fatal(CALL_INFO, -1, "timing_classes: %s: unit '%s'\n", name, unit);
+            r.vector_pipe = timing_units_[id] == INST_FP_ARITH || timing_units_[id] == INST_FP_DIV;
+            if ( r.divide_bits_per_cycle == 0 ) output_->fatal(CALL_INFO, -1, "timing_classes: %s: divide_bits_per_cycle 0\n", name);
+            seen[id] = true;
+        }
+        for ( uint16_t c = 0; c < count; ++c ) {
+            if ( ! seen[c] ) output_->fatal(CALL_INFO, -1, "timing_classes has no record of class '%s'\n", a64TimingClassName(static_cast<A64Tc>(c)));
+        }
+        timing_given_ = true;
+    }
+
+    // The divide and square root class of a scalar format: fmt is log2 of the bytes, 1 for half precision.
+    static A64Tc fpDivClass(const uint32_t fmt)
+    {
+        return fmt == 1 ? A64Tc::FP_DIVSQRT_H : fmt == 2 ? A64Tc::FP_DIVSQRT_S : A64Tc::FP_DIVSQRT_D;
+    }
+    // The divide and square root class of a vector: ebytes is the element size and vbytes the bytes of the vector.
+    static A64Tc vectorDivClass(const uint32_t ebytes, const uint32_t vbytes)
+    {
+        if ( vbytes <= 8 ) return ebytes == 2 ? A64Tc::V_DIVSQRT_4H : A64Tc::V_DIVSQRT_2S;
+        return ebytes == 2 ? A64Tc::V_DIVSQRT_8H : ebytes == 4 ? A64Tc::V_DIVSQRT_4S : A64Tc::V_DIVSQRT_2D;
+    }
+
+    // The convert, round and estimate class by the number of elements: two or fewer, four, eight.
+    static A64Tc cvtClassOf(const uint32_t elements)
+    {
+        return elements <= 2 ? A64Tc::FP_CVT : elements <= 4 ? A64Tc::FP_CVT_S : A64Tc::FP_CVT_H;
+    }
+    // An integer reduction across a vector by the number of elements.
+    static A64Tc reduceClass(const uint32_t elements)
+    {
+        return elements <= 4 ? A64Tc::V_REDUCE_S : elements <= 8 ? A64Tc::V_REDUCE_H : A64Tc::V_REDUCE_B;
+    }
+    // AdvSIMD floating-point three-same; code is U:size<1>:opcode, a log2 of the element bytes, vbytes the operand bytes.
+    static A64Tc fpThreeSameClass(const uint32_t code, const uint32_t a, const uint32_t vbytes)
+    {
+        switch ( code ) {
+        case 0x5F: return vbytes == (1u << a) ? fpDivClass(a) : vectorDivClass(1u << a, vbytes);   // FDIV
+        case 0x1B: case 0x5B: return A64Tc::FP_MUL;                                               // FMULX, FMUL
+        case 0x19: case 0x39: return A64Tc::FP_MLA;                                               // FMLA, FMLS
+        case 0x1F: case 0x3F: return A64Tc::FP_RECPS;                                             // FRECPS, FRSQRTS
+        case 0x58: case 0x5A: case 0x5E: case 0x78: case 0x7E: return A64Tc::FP_PAIRWISE;        // pairwise max, min, add
+        default: return A64Tc::FP_ALU;                                                            // add, sub, max, min, compare, FABD
+        }
+    }
+    // AdvSIMD floating-point two-register miscellaneous; code is U:size<1>:opcode.
+    static A64Tc fpMiscClass(const uint32_t code, const uint32_t a, const uint32_t vbytes)
+    {
+        switch ( code ) {
+        case 0x7F: return vbytes == (1u << a) ? fpDivClass(a) : vectorDivClass(1u << a, vbytes);   // FSQRT
+        case 0x2C: case 0x2D: case 0x2E: case 0x2F: case 0x6C: case 0x6D: case 0x6F: return A64Tc::FP_ALU;   // compare with zero, FABS, FNEG
+        default: return cvtClassOf(vbytes >> a);                                                    // round, convert, estimate
+        }
+    }
+    // AdvSIMD integer three-same by opcode.
+    static A64Tc intThreeSameClass(const uint32_t opcode, const bool U, const uint32_t size)
+    {
+        switch ( opcode ) {
+        case 3: return U && size != 0 ? A64Tc::V_MISC : A64Tc::V_ALU;            // BSL, BIT, BIF; the logical operations
+        case 8: return A64Tc::V_SHIFT;                                            // SSHL, USHL
+        case 9: case 10: case 11: return A64Tc::V_SHIFT_COMPLEX;                  // SQSHL, SRSHL, SQRSHL
+        case 15: return A64Tc::V_ACCUMULATE;                                      // SABA, UABA
+        case 18: return A64Tc::V_MLA;                                             // MLA, MLS
+        case 19: return U ? A64Tc::V_PMULL : A64Tc::V_MUL;                       // PMUL, MUL
+        case 22: return A64Tc::V_MUL;                                             // SQDMULH, SQRDMULH
+        default: return A64Tc::V_ALU;
+        }
+    }
+    // AdvSIMD integer two-register miscellaneous by opcode.
+    static A64Tc intMiscClass(const uint32_t opcode, const bool U)
+    {
+        switch ( opcode ) {
+        case 0: case 1: case 4: case 5: return A64Tc::V_MISC;                    // REV, CLS, CLZ, CNT, NOT, RBIT
+        case 6: return A64Tc::V_ACCUMULATE;                                       // SADALP, UADALP
+        case 0x12: return U ? A64Tc::V_SAT_NARROW : A64Tc::V_MISC;               // SQXTUN, XTN
+        case 0x13: return A64Tc::V_SHIFT;                                         // SHLL
+        case 0x14: return A64Tc::V_SAT_NARROW;                                    // SQXTN, UQXTN
+        default: return A64Tc::V_ALU;
+        }
+    }
+    // AdvSIMD integer three-different by opcode.
+    static A64Tc intThreeDiffClass(const uint32_t opcode)
+    {
+        switch ( opcode ) {
+        case 5: return A64Tc::V_ACCUMULATE;                                       // SABAL, UABAL
+        case 8: case 9: case 10: case 11: return A64Tc::V_MLA;                    // SMLAL, SQDMLAL, SMLSL, SQDMLSL
+        case 12: case 13: return A64Tc::V_MUL;                                    // SMULL, SQDMULL
+        case 14: return A64Tc::V_PMULL;                                           // PMULL
+        default: return A64Tc::V_ALU;
+        }
+    }
+    // AdvSIMD shift by immediate by U:opcode.
+    static A64Tc shiftImmClass(const uint32_t opcode, const bool U)
+    {
+        switch ( opcode ) {
+        case 0: case 8: case 10: case 20: return A64Tc::V_SHIFT;                  // SSHR, SRI, SHL, SLI, SSHLL
+        case 2: case 6: return A64Tc::V_ACCUMULATE;                               // SSRA, SRSRA
+        case 16: return U ? A64Tc::V_SHIFT_COMPLEX : A64Tc::V_SHIFT;             // SQSHRUN, SHRN
+        default: return A64Tc::V_SHIFT_COMPLEX;                                   // rounding and saturating shifts
+        }
+    }
+
+    // SVE predicated integer binary arithmetic by opcode.
+    static A64Tc svePredBinClass(const uint32_t code)
+    {
+        if ( code >= 0x14 && code <= 0x17 ) return A64Tc::Z_DIV;                 // SDIV, UDIV, SDIVR, UDIVR
+        if ( code >= 0x10 && code <= 0x13 ) return A64Tc::V_MUL;                 // MUL, SMULH, UMULH
+        return A64Tc::V_ALU;
+    }
+    // SVE integer reductions by opcode and element size.
+    static A64Tc sveReduceClass(const uint32_t code, const uint32_t size)
+    {
+        if ( code <= 1 ) return size == 0 ? A64Tc::Z_REDUCE_ADD_B : size == 1 ? A64Tc::Z_REDUCE_ADD_H : size == 2 ? A64Tc::Z_REDUCE_ADD_S : A64Tc::Z_REDUCE_ADD_D;
+        if ( code >= 0x18 ) return A64Tc::Z_REDUCE_LOGIC;                        // ORV, EORV, ANDV
+        return A64Tc::Z_REDUCE_MINMAX;
+    }
+
+    // Gives a micro-op its timing class: the record, and the functional unit whose pipes the record names.
+    VanadisArm64Inst* tc(VanadisArm64Inst* i, const A64Tc c)
+    {
+        if ( ! timing_given_ ) return i;
+        const uint16_t id = static_cast<uint16_t>(c);
+        i->setTiming(&timing_records_[id]);
+        i->setUnit(timing_units_[id]);
+        i->setAccumulatorCycles(timing_records_[id].accumulator_cycles);
+        // An accumulating vector micro-op reads its destination: that input, the first such, is the accumulator.
+        if ( timing_records_[id].accumulator_cycles > 0 && i->getAccumulatorFPRegIn() == VanadisInstruction::NO_ACCUMULATOR
+             && i->countISAFPRegOut() > 0 ) {
+            for ( uint16_t k = 0; k < i->countISAFPRegIn(); ++k ) {
+                if ( i->getISAFPRegIn(k) == i->getISAFPRegOut(0) ) {
+                    i->setAccumulatorFPRegIn(k, timing_records_[id].accumulator_cycles);
+                    break;
+                }
+            }
+        }
+        else if ( i->getAccumulatorFPRegIn() != VanadisInstruction::NO_ACCUMULATOR ) {
+            i->setAccumulatorFPRegIn(i->getAccumulatorFPRegIn(), timing_records_[id].accumulator_cycles);
+        }
+        return i;
     }
     uint64_t                     core_hz;
 
@@ -356,7 +605,7 @@ protected:
                 add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
                 return true;
             }
-            op(bundle, addr, bit(ins, 31) ? "ADRP" : "ADR", INST_INT_ARITH, movImm, {}, { static_cast<uint16_t>(rd) })->imm = val;
+            tc(op(bundle, addr, bit(ins, 31) ? "ADRP" : "ADR", INST_INT_ARITH, movImm, {}, { static_cast<uint16_t>(rd) }), A64Tc::INT_ALU)->imm = val;
             return true;
         }
         case 0b010:
@@ -377,6 +626,7 @@ protected:
                 flags |= HAS_RD;
             }
             auto* i = op(bundle, addr, sub ? (set ? "SUBSI" : "SUBI") : (set ? "ADDSI" : "ADDI"), INST_INT_ARITH, addSub, { rs(rn) }, out);
+            tc(i, set ? A64Tc::INT_ALU_FLAGS : A64Tc::INT_ALU);
             i->a = sf; i->b = sub; i->d = flags; i->imm = imm; i->imm2 = OP2_IMM;
             return true;
         }
@@ -399,7 +649,7 @@ protected:
                 out.push_back(rd);   // SP-capable
                 flags |= HAS_RD;
             }
-            auto* i = op(bundle, addr, "LOGICI", INST_INT_ARITH, logicalOp, { rz(rn) }, out);
+            auto* i = tc(op(bundle, addr, "LOGICI", INST_INT_ARITH, logicalOp, { rz(rn) }, out), set ? A64Tc::INT_ALU_FLAGS : A64Tc::INT_ALU);
             i->a = sf; i->d = flags; i->imm = wmask; i->imm2 = OP2_IMM;
             i->b = (opc == 1) ? 1 : (opc == 2 ? 2 : 0);
             return true;
@@ -414,14 +664,15 @@ protected:
                 return true;
             }
             if ( opc == 3 ) {
-                auto* i = op(bundle, addr, "MOVK", INST_INT_ARITH, movK, { rz(rd) }, { static_cast<uint16_t>(rd) });
+                auto* i = tc(op(bundle, addr, "MOVK", INST_INT_ARITH, movK, { rz(rd) }, { static_cast<uint16_t>(rd) }), A64Tc::INT_ALU);
                 i->a = sf; i->d = HAS_RD; i->imm = imm; i->imm2 = 0xFFFFull << (hw * 16);
             }
             else {
                 // opc 0 is MOVN, 2 is MOVZ
                 uint64_t v = opc == 2 ? imm : ~imm;
                 if ( !sf ) v &= 0xFFFFFFFFull;
-                op(bundle, addr, opc == 2 ? "MOVZ" : "MOVN", INST_INT_ARITH, movImm, {}, { static_cast<uint16_t>(rd) })->imm = v;
+                tc(op(bundle, addr, opc == 2 ? "MOVZ" : "MOVN", INST_INT_ARITH, movImm, {}, { static_cast<uint16_t>(rd) }),
+                    v == 0 ? A64Tc::INT_MOVE_ZERO : A64Tc::INT_ALU)->imm = v;
             }
             return true;
         }
@@ -441,6 +692,7 @@ protected:
             if ( opc == 1 ) in.push_back(rz(rd));
             auto* i = op(bundle, addr, opc == 0 ? "SBFM" : (opc == 1 ? "BFM" : "UBFM"), INST_INT_ARITH, bitfield, in,
                 { static_cast<uint16_t>(rd) });
+            tc(i, opc == 1 ? A64Tc::INT_BFM : A64Tc::INT_ALU);
             i->a = sf; i->b = opc; i->c = immr; i->d = HAS_RD | (imms << 16); i->imm = wmask; i->imm2 = tmask;
             return true;
         }
@@ -452,6 +704,7 @@ protected:
                 return true;
             }
             auto* i = op(bundle, addr, "EXTR", INST_INT_ARITH, extr, { rz(rn), rz(bits(ins, 20, 16)) }, { static_cast<uint16_t>(rd) });
+            tc(i, rn == bits(ins, 20, 16) ? A64Tc::INT_ALU : A64Tc::INT_EXTR);
             i->a = sf; i->c = bits(ins, 15, 10); i->d = HAS_RD;
             return true;
         }
@@ -491,6 +744,9 @@ protected:
                 const auto out = rd_out(set, flags);
                 if ( out.empty() ) return nop();
                 auto* i = op(bundle, addr, "LOGIC", INST_INT_ARITH, logicalOp, { rz(rn), rz(rm) }, out);
+                // MOV Xd, XZR is a zero-latency move; a flag-setting form with a shift takes two cycles.
+                const bool zero_move = opc == 1 && !invert && rn == 31 && rm == 31;
+                tc(i, zero_move ? A64Tc::INT_MOVE_ZERO : (set ? (amount ? A64Tc::INT_ALU_SHIFT : A64Tc::INT_ALU_FLAGS) : A64Tc::INT_ALU));
                 i->a = sf; i->d = flags; i->imm2 = OP2_SHIFT;
                 i->b = (opc == 1) ? 1 : (opc == 2 ? 2 : 0);
                 i->c = (shift << 8) | amount | (invert ? (1u << 16) : 0);
@@ -505,6 +761,8 @@ protected:
                 const auto out = rd_out(set, flags);
                 if ( out.empty() ) return nop();
                 auto* i = op(bundle, addr, sub ? "SUB" : "ADD", INST_INT_ARITH, addSub, { rz(rn), rz(rm) }, out);
+                // LSL by up to 4 is a one-cycle ALU operation; LSR, ASR and larger shifts take two cycles.
+                tc(i, (shift != 0 || amount > 4) ? A64Tc::INT_ALU_SHIFT : (set ? A64Tc::INT_ALU_FLAGS : A64Tc::INT_ALU));
                 i->a = sf; i->b = sub; i->d = flags; i->imm2 = OP2_SHIFT; i->c = (shift << 8) | amount;
                 return true;
             }
@@ -523,7 +781,7 @@ protected:
                 out.push_back(rd);    // SP-capable
                 flags |= HAS_RD;
             }
-            auto* i = op(bundle, addr, sub ? "SUBX" : "ADDX", INST_INT_ARITH, addSub, { rs(rn), rz(rm) }, out);
+            auto* i = tc(op(bundle, addr, sub ? "SUBX" : "ADDX", INST_INT_ARITH, addSub, { rs(rn), rz(rm) }, out), A64Tc::INT_ALU_SHIFT);
             i->a = sf; i->b = sub; i->d = flags; i->imm2 = OP2_EXT; i->c = (option << 8) | amount;
             return true;
         }
@@ -537,20 +795,21 @@ protected:
                 const auto out = rd_out(set, flags);
                 if ( out.empty() ) return nop();
                 auto* i = op(bundle, addr, sub ? "SBC" : "ADC", INST_INT_ARITH, addSubCarry, { rz(rn), rz(rm), A64Reg::NZCV }, out);
+                tc(i, set ? A64Tc::INT_ALU_FLAGS : A64Tc::INT_ALU);
                 i->a = sf; i->b = sub; i->d = flags;
                 return true;
             }
             if ( (op3 & 0b011111) == 0b000001 ) {
                 // RMIF
                 if ( !sf || !bit(ins, 29) || bit(ins, 30) || bit(ins, 4) ) return false;
-                auto* i = op(bundle, addr, "RMIF", INST_INT_ARITH, rmif, { rz(rn), A64Reg::NZCV }, { A64Reg::NZCV });
+                auto* i = tc(op(bundle, addr, "RMIF", INST_INT_ARITH, rmif, { rz(rn), A64Reg::NZCV }, { A64Reg::NZCV }), A64Tc::INT_ALU_FLAGS);
                 i->c = bits(ins, 20, 15); i->imm = bits(ins, 3, 0);
                 return true;
             }
             if ( (op3 & 0b001111) == 0b000010 ) {
                 // SETF8, SETF16
                 if ( sf || bit(ins, 30) || !bit(ins, 29) || bits(ins, 20, 15) != 0 || bits(ins, 4, 0) != 0b01101 ) return false;
-                auto* i = op(bundle, addr, "SETF", INST_INT_ARITH, setf, { rz(rn), A64Reg::NZCV }, { A64Reg::NZCV });
+                auto* i = tc(op(bundle, addr, "SETF", INST_INT_ARITH, setf, { rz(rn), A64Reg::NZCV }, { A64Reg::NZCV }), A64Tc::INT_ALU_FLAGS);
                 i->c = bit(ins, 14) ? 16 : 8;
                 return true;
             }
@@ -562,7 +821,7 @@ protected:
             const bool is_imm = bit(ins, 11), sub = bit(ins, 30);
             std::vector<uint16_t> in{ rz(rn), A64Reg::NZCV };
             if ( !is_imm ) in.push_back(rz(rm));
-            auto* i = op(bundle, addr, sub ? "CCMP" : "CCMN", INST_INT_ARITH, condCompare, in, { A64Reg::NZCV });
+            auto* i = tc(op(bundle, addr, sub ? "CCMP" : "CCMN", INST_INT_ARITH, condCompare, in, { A64Reg::NZCV }), A64Tc::INT_ALU_FLAGS);
             i->a = sf; i->b = (sub ? 1 : 0) | (is_imm ? 0 : 2); i->c = bits(ins, 15, 12); i->d = SET_FLAGS;
             i->imm = rm; i->imm2 = static_cast<uint64_t>(bits(ins, 3, 0)) << 28;
             return true;
@@ -571,7 +830,7 @@ protected:
             // conditional select
             if ( bit(ins, 29) || bit(ins, 11) ) return false;
             if ( rd == 31 ) return nop();
-            auto* i = op(bundle, addr, "CSEL", INST_INT_ARITH, condSelect, { rz(rn), rz(rm), A64Reg::NZCV }, { static_cast<uint16_t>(rd) });
+            auto* i = tc(op(bundle, addr, "CSEL", INST_INT_ARITH, condSelect, { rz(rn), rz(rm), A64Reg::NZCV }, { static_cast<uint16_t>(rd) }), A64Tc::INT_ALU);
             i->a = sf; i->d = HAS_RD; i->c = bits(ins, 15, 12);
             i->b = (bit(ins, 30) ? 2 : 0) | (bit(ins, 10) ? 1 : 0);
             return true;
@@ -595,7 +854,7 @@ protected:
                 default: return false;
                 }
                 if ( rd == 31 ) return nop();
-                auto* i = op(bundle, addr, "DP1", INST_INT_ARITH, dataProc1, { rz(rn) }, { static_cast<uint16_t>(rd) });
+                auto* i = tc(op(bundle, addr, "DP1", INST_INT_ARITH, dataProc1, { rz(rn) }, { static_cast<uint16_t>(rd) }), A64Tc::INT_ALU);
                 i->a = sf; i->b = static_cast<uint32_t>(kind); i->d = HAS_RD;
                 // REV (32-bit operation) is opc 2; 64-bit REV32 keeps the word order.
                 if ( kind == Dp1Op::REV32 && !sf ) i->b = static_cast<uint32_t>(Dp1Op::REV32);
@@ -608,7 +867,8 @@ protected:
                 const uint32_t sz = bits(ins, 11, 10);
                 if ( (sz == 3) != sf ) return false;
                 if ( rd == 31 ) return nop();
-                auto* i = op(bundle, addr, "CRC32", INST_INT_ARITH, crc32, { rz(rn), rz(rm) }, { static_cast<uint16_t>(rd) });
+                auto* i = tc(op(bundle, addr, "CRC32", INST_INT_ARITH, crc32, { rz(rn), rz(rm) }, { static_cast<uint16_t>(rd) }), A64Tc::INT_CRC);
+                i->setAccumulatorIntRegIn(0);
                 i->a = 0; i->b = 1u << sz; i->d = HAS_RD;
                 i->c = bit(ins, 12) ? 0x82F63B78u : 0xEDB88320u;
                 return true;
@@ -627,6 +887,8 @@ protected:
             if ( rd == 31 ) return nop();
             auto* i = op(bundle, addr, "DP2", unit, dataProc2, { rz(rn), rz(rm) }, { static_cast<uint16_t>(rd) });
             i->a = sf; i->b = static_cast<uint32_t>(kind); i->d = HAS_RD;
+            tc(i, unit == INST_INT_DIV ? A64Tc::INT_DIV : A64Tc::INT_ALU);
+            i->divide_signed_kind = static_cast<uint32_t>(Dp2Op::SDIV);
             return true;
         }
         if ( op2 & 0b1000 ) {
@@ -649,6 +911,10 @@ protected:
             auto* i = op(bundle, addr, "DP3", INST_INT_ARITH, dataProc3, { rz(rn), rz(rm), rz(ra) }, { static_cast<uint16_t>(rd) });
             i->a = is64; i->b = static_cast<uint32_t>(kind); i->d = HAS_RD;
             i->setExtraExecuteCycles(integer_mul_extra_cycles);
+            // MUL, MNEG, SMULL and UMULL are the multiply-adds with XZR as the addend.
+            const bool high = kind == Dp3Op::SMULH || kind == Dp3Op::UMULH;
+            tc(i, high ? A64Tc::INT_MULH : (ra == 31 ? A64Tc::INT_MUL : A64Tc::INT_MADD));
+            if ( !high && ra != 31 ) i->setAccumulatorIntRegIn(2);
             return true;
         }
         return false;
@@ -738,7 +1004,7 @@ protected:
             switch ( op2 ) {
             case 2: return nop();    // CLREX: the monitor is cleared by the next store-conditional
             case 6: {                // ISB: nothing younger issues until it retires, which is what a following MRS needs
-                auto* isb = op(bundle, addr, "ISB", INST_INT_ARITH, [](VanadisArm64Inst&, VanadisRegisterFile*) {}, {}, {});
+                auto* isb = tc(op(bundle, addr, "ISB", INST_INT_ARITH, [](VanadisArm64Inst&, VanadisRegisterFile*) {}, {}, {}), A64Tc::INT_ALU);
                 isb->markSerializing();
                 return true;
             }
@@ -759,9 +1025,9 @@ protected:
         if ( !L && op0 == 0 && crn == 0b0100 && rt == 31 ) {
             // MSR (immediate) to a PSTATE field: CFINV, XAFLAG, AXFLAG are in this space.
             if ( op1 == 0 && crm == 0 ) {
-                if ( op2 == 0 ) { op(bundle, addr, "CFINV", INST_INT_ARITH, cfinv, { A64Reg::NZCV }, { A64Reg::NZCV }); return true; }
-                if ( op2 == 1 ) { op(bundle, addr, "XAFLAG", INST_INT_ARITH, xaflag, { A64Reg::NZCV }, { A64Reg::NZCV }); return true; }
-                if ( op2 == 2 ) { op(bundle, addr, "AXFLAG", INST_INT_ARITH, axflag, { A64Reg::NZCV }, { A64Reg::NZCV }); return true; }
+                if ( op2 == 0 ) { tc(op(bundle, addr, "CFINV", INST_INT_ARITH, cfinv, { A64Reg::NZCV }, { A64Reg::NZCV }), A64Tc::INT_ALU_FLAGS); return true; }
+                if ( op2 == 1 ) { tc(op(bundle, addr, "XAFLAG", INST_INT_ARITH, xaflag, { A64Reg::NZCV }, { A64Reg::NZCV }), A64Tc::INT_ALU_FLAGS); return true; }
+                if ( op2 == 2 ) { tc(op(bundle, addr, "AXFLAG", INST_INT_ARITH, axflag, { A64Reg::NZCV }, { A64Reg::NZCV }), A64Tc::INT_ALU_FLAGS); return true; }
             }
             return false;
         }
@@ -780,9 +1046,9 @@ protected:
     {
         using namespace A64Sem;
         // The block address is Rt aligned down; the zeroing is a run of 8-byte stores of ZR.
-        auto* i = op(bundle, addr, "DCZVA.addr", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+        auto* i = tc(op(bundle, addr, "DCZVA.addr", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
             o.setX(rf, 0, o.X(rf, 0) & ~o.imm);
-        }, { rz(rt) }, { A64Reg::T0 });
+        }, { rz(rt) }, { A64Reg::T0 }), A64Tc::INT_ALU);
         i->imm = dczid_block_bytes - 1;
         for ( uint32_t off = 0; off < dczid_block_bytes; off += 8 ) {
             add(bundle, new VanadisStoreInstruction(addr, hw_thr, options, A64Reg::T0, off, A64Reg::ZR, 8,
@@ -804,23 +1070,23 @@ protected:
                 add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
             }
             else {
-                op(bundle, addr, name, INST_INT_ARITH, movImm, {}, { static_cast<uint16_t>(rt) })->imm = v;
+                tc(op(bundle, addr, name, INST_INT_ARITH, movImm, {}, { static_cast<uint16_t>(rt) }), A64Tc::INT_ALU)->imm = v;
             }
             return true;
         };
         if ( key == enc(3, 3, 4, 2, 0) ) {   // NZCV
             if ( L ) {
                 if ( rt == 31 ) { add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options)); return true; }
-                op(bundle, addr, "MRS.NZCV", INST_INT_ARITH, mrsNzcv, { A64Reg::NZCV }, { static_cast<uint16_t>(rt) });
+                tc(op(bundle, addr, "MRS.NZCV", INST_INT_ARITH, mrsNzcv, { A64Reg::NZCV }, { static_cast<uint16_t>(rt) }), A64Tc::INT_ALU);
             }
             else {
-                op(bundle, addr, "MSR.NZCV", INST_INT_ARITH, msrNzcv, { rz(rt) }, { A64Reg::NZCV });
+                tc(op(bundle, addr, "MSR.NZCV", INST_INT_ARITH, msrNzcv, { rz(rt) }, { A64Reg::NZCV }), A64Tc::INT_ALU);
             }
             return true;
         }
         if ( key == enc(3, 3, 13, 0, 2) ) {   // TPIDR_EL0
-            auto* i = op(bundle, addr, "TPIDR", INST_INT_ARITH, movReg, { L ? A64Reg::TPIDR : rz(rt) },
-                L ? dz(rt) : std::vector<uint16_t>{ A64Reg::TPIDR });
+            auto* i = tc(op(bundle, addr, "TPIDR", INST_INT_ARITH, movReg, { L ? A64Reg::TPIDR : rz(rt) },
+                L ? dz(rt) : std::vector<uint16_t>{ A64Reg::TPIDR }), A64Tc::INT_ALU);
             i->a = 1;
             i->d = (L && rt == 31) ? 0 : HAS_RD;
             return true;
@@ -845,9 +1111,9 @@ protected:
             case enc(3, 3, 14, 0, 6):        // CNTVCTSS_EL0
             {
                 if ( rt == 31 ) { add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options)); return true; }
-                auto* i = op(bundle, addr, "CNTVCT", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+                auto* i = tc(op(bundle, addr, "CNTVCT", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
                     o.setX(rf, 0, reinterpret_cast<const VanadisARM64Decoder*>(o.imm)->counterValue());
-                }, {}, { static_cast<uint16_t>(rt) });
+                }, {}, { static_cast<uint16_t>(rt) }), A64Tc::INT_ALU);
                 i->imm = reinterpret_cast<uint64_t>(this);
                 return true;
             }
@@ -876,9 +1142,16 @@ protected:
     {
         add(bundle, new VanadisStoreInstruction(addr, hw_thr, options, base, off, value, bytes, MEM_TRANSACTION_NONE, STORE_FP_REGISTER));
     }
+    // The last micro-op of the bundle, the second register of a store pair, goes to memory with the first in one store port.
+    void sharePortWithPrevious(VanadisInstructionBundle* bundle)
+    {
+        if ( ! timing_given_ ) return;
+        VanadisStoreInstruction* store = dynamic_cast<VanadisStoreInstruction*>(bundle->getInstructionByIndex(bundle->getInstructionCount() - 1));
+        if ( store != nullptr ) store->markSharesStorePort();
+    }
     void addImmTo(VanadisInstructionBundle* bundle, uint64_t addr, uint16_t dst, uint16_t src, int64_t imm)
     {
-        op(bundle, addr, "ADDIMM", INST_INT_ARITH, A64Sem::addImm, { src }, { dst })->imm = static_cast<uint64_t>(imm);
+        tc(op(bundle, addr, "ADDIMM", INST_INT_ARITH, A64Sem::addImm, { src }, { dst }), A64Tc::INT_ALU)->imm = static_cast<uint64_t>(imm);
     }
 
     // One load or store of Rt at base + off. size is log2(bytes); opc is the load/store opc field.
@@ -917,7 +1190,7 @@ protected:
         if ( size >= 2 ) return false;
         loadInt(bundle, addr, base, off, target, bytes, true);
         if ( rt != 31 ) {
-            auto* i = op(bundle, addr, "ZEXT32", INST_INT_ARITH, movReg, { target }, { target });
+            auto* i = tc(op(bundle, addr, "ZEXT32", INST_INT_ARITH, movReg, { target }, { target }), A64Tc::INT_INTERNAL);
             i->a = 0;
             i->d = HAS_RD;
         }
@@ -954,7 +1227,7 @@ protected:
             const uint64_t target = addr + off;
             if ( vec ) {
                 if ( opc == 3 ) return false;
-                op(bundle, addr, "LITADDR", INST_INT_ARITH, movImm, {}, { A64Reg::T0 })->imm = target;
+                tc(op(bundle, addr, "LITADDR", INST_INT_ARITH, movImm, {}, { A64Reg::T0 }), A64Tc::INT_ALU)->imm = target;
                 loadFp(bundle, addr, A64Reg::T0, 0, rt, 4u << opc);
                 return true;
             }
@@ -962,7 +1235,7 @@ protected:
                 add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
                 return true;
             }
-            op(bundle, addr, "LITADDR", INST_INT_ARITH, movImm, {}, { A64Reg::T0 })->imm = target;
+            tc(op(bundle, addr, "LITADDR", INST_INT_ARITH, movImm, {}, { A64Reg::T0 }), A64Tc::INT_ALU)->imm = target;
             const uint16_t t = rt == 31 ? A64Reg::T1 : static_cast<uint16_t>(rt);
             if ( opc == 2 ) loadInt(bundle, addr, A64Reg::T0, 0, t, 4, true);
             else loadInt(bundle, addr, A64Reg::T0, 0, t, opc == 1 ? 8 : 4, false);
@@ -985,7 +1258,9 @@ protected:
                     if ( !(option & 2) ) return false;
                     const uint32_t scale = vec ? (((opc & 2) && size == 0) ? 4 : size) : size;
                     const uint32_t shift = bit(ins, 12) ? scale : 0;
-                    auto* i = op(bundle, addr, "ADDRREG", INST_INT_ARITH, addrRegOffset, { rs(rn), rz(bits(ins, 20, 16)) }, { A64Reg::T0 });
+                    // The address generation of a register-offset access is part of the load or store: latency 0.
+                    auto* i = tc(op(bundle, addr, "ADDRREG", INST_INT_ARITH, addrRegOffset, { rs(rn), rz(bits(ins, 20, 16)) }, { A64Reg::T0 }),
+                        A64Tc::INT_INTERNAL);
                     i->c = (option << 8) | shift;
                     return singleAccess(bundle, addr, vec, size, opc, A64Reg::T0, 0, rt);
                 }
@@ -1026,7 +1301,7 @@ protected:
         const uint16_t target = rt == 31 ? A64Reg::T1 : static_cast<uint16_t>(rt);
         loadInt(bundle, addr, rs(rn), off, target, bytes, opc >= 2);
         if ( opc == 3 && rt != 31 ) {
-            auto* i = op(bundle, addr, "ZEXT32", INST_INT_ARITH, movReg, { target }, { target });
+            auto* i = tc(op(bundle, addr, "ZEXT32", INST_INT_ARITH, movReg, { target }, { target }), A64Tc::INT_INTERNAL);
             i->a = 0;
             i->d = HAS_RD;
         }
@@ -1061,7 +1336,7 @@ protected:
         // is copied when Rt is the base.
         uint16_t use_base = base;
         if ( load && !vec && rt == rn && !writeback ) {
-            auto* m = op(bundle, addr, "COPYBASE", INST_INT_ARITH, movReg, { base }, { A64Reg::T0 });
+            auto* m = tc(op(bundle, addr, "COPYBASE", INST_INT_ARITH, movReg, { base }, { A64Reg::T0 }), A64Tc::INT_INTERNAL);
             m->a = 1;
             m->d = HAS_RD;
             use_base = A64Reg::T0;
@@ -1074,6 +1349,7 @@ protected:
             else {
                 storeFp(bundle, addr, base, access_off, rt, bytes);
                 storeFp(bundle, addr, base, access_off + bytes, rt2, bytes);
+                if ( bytes <= 8 ) sharePortWithPrevious(bundle);
             }
         }
         else if ( load ) {
@@ -1083,6 +1359,7 @@ protected:
         else {
             storeInt(bundle, addr, base, access_off, rz(rt), bytes);
             storeInt(bundle, addr, base, access_off + bytes, rz(rt2), bytes);
+            sharePortWithPrevious(bundle);
         }
         if ( writeback ) addImmTo(bundle, addr, base, base, off);
         return true;
@@ -1141,7 +1418,7 @@ protected:
                 MEM_TRANSACTION_LLSC_LOAD, LOAD_FP_REGISTER));
             std::vector<uint16_t> out = dz(rt);
             for ( auto r : dz(rt2) ) out.push_back(r);
-            auto* i = op(bundle, addr, "SPLITPAIR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+            auto* i = tc(op(bundle, addr, "SPLITPAIR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
                 const uint8_t* v = o.Vin(rf, 0);
                 uint64_t lo = 0, hi = 0;
                 std::memcpy(&lo, v, o.c);
@@ -1149,19 +1426,19 @@ protected:
                 uint32_t pos = 0;
                 if ( o.a & 1 ) o.setX(rf, pos++, lo);
                 if ( o.a & 2 ) o.setX(rf, pos++, hi);
-            }, {}, out, { A64Reg::VT0 });
+            }, {}, out, { A64Reg::VT0 }), A64Tc::INT_ALU);
             i->c = elem;
             i->a = (rt != 31 ? 1 : 0) | (rt2 != 31 ? 2 : 0);
             if ( o0 ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
             return true;
         }
         if ( o0 ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
-        auto* i = op(bundle, addr, "JOINPAIR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+        auto* i = tc(op(bundle, addr, "JOINPAIR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
             const uint64_t lo = o.X(rf, 0), hi = o.X(rf, 1);
             uint8_t* v = o.Vout(rf, 0);
             std::memcpy(v, &lo, o.c);
             std::memcpy(v + o.c, &hi, o.c);
-        }, { rz(rt), rz(rt2) }, {}, {}, { A64Reg::VT0 });
+        }, { rz(rt), rz(rt2) }, {}, {}, { A64Reg::VT0 }), A64Tc::INT_ALU);
         i->c = elem;
         add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0,
             rs_ == 31 ? A64Reg::T2 : static_cast<uint16_t>(rs_), elem * 2, STORE_FP_REGISTER, 0, 1));
@@ -1178,8 +1455,8 @@ protected:
         add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, base, 0, A64Reg::T2, A64Reg::T3, bytes,
             STORE_INT_REGISTER, 0, 1));
         if ( rd != 31 ) {
-            op(bundle, addr, "RMWRES", INST_INT_ARITH, rmwCommit, { A64Reg::T3, A64Reg::T1, static_cast<uint16_t>(rd) },
-                { static_cast<uint16_t>(rd) })->c = bytes;
+            tc(op(bundle, addr, "RMWRES", INST_INT_ARITH, rmwCommit, { A64Reg::T3, A64Reg::T1, static_cast<uint16_t>(rd) },
+                { static_cast<uint16_t>(rd) }), A64Tc::INT_ALU)->c = bytes;
         }
         if ( acquire ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         add(bundle, new VanadisArm64Branch(addr, hw_thr, options, "RMWRETRY", VanadisArm64BranchKind::CBNZ, 0, 0, true,
@@ -1194,7 +1471,7 @@ protected:
         const uint32_t bytes = 1u << size;
         if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         loadInt(bundle, addr, rs(rn), 0, A64Reg::T1, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
-        op(bundle, addr, "CASVAL", INST_INT_ARITH, casValue, { A64Reg::T1, rz(rs_), rz(rt) }, { A64Reg::T2 })->c = bytes;
+        tc(op(bundle, addr, "CASVAL", INST_INT_ARITH, casValue, { A64Reg::T1, rz(rs_), rz(rt) }, { A64Reg::T2 }), A64Tc::INT_ALU)->c = bytes;
         rmwStoreAndRetry(bundle, addr, rs(rn), bytes, rs_, A);
         return true;
     }
@@ -1210,7 +1487,7 @@ protected:
         add(bundle, new VanadisLoadInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT0, elem * 2, false,
             MEM_TRANSACTION_LLSC_LOAD, LOAD_FP_REGISTER));
         // New value of the pair in VT1: Rt,Rt+1 when the memory equals Rs,Rs+1, else the memory unchanged.
-        auto* i = op(bundle, addr, "CASPVAL", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+        auto* i = tc(op(bundle, addr, "CASPVAL", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
             const uint8_t* mem = o.Vin(rf, 0);
             uint64_t lo = 0, hi = 0;
             std::memcpy(&lo, mem, o.c);
@@ -1226,14 +1503,14 @@ protected:
             else {
                 std::memcpy(v, mem, o.c * 2);
             }
-        }, { rz(rs_), rz(rs_ + 1), rz(rt), rz(rt + 1) }, {}, { A64Reg::VT0 }, { A64Reg::VT1 });
+        }, { rz(rs_), rz(rs_ + 1), rz(rt), rz(rt + 1) }, {}, { A64Reg::VT0 }, { A64Reg::VT1 }), A64Tc::INT_ALU);
         i->c = elem;
         add(bundle, new VanadisStoreConditionalInstruction(addr, hw_thr, options, rs(rn), 0, A64Reg::VT1, A64Reg::T3,
             elem * 2, STORE_FP_REGISTER, 0, 1));
         // The pair goes to Rs, Rs+1 only when the store succeeded; the branch is the last micro-op (rmwStoreAndRetry).
         std::vector<uint16_t> out = dz(rs_);
         for ( auto r : dz(rs_ + 1) ) out.push_back(r);
-        auto* j = op(bundle, addr, "RMWRES2", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+        auto* j = tc(op(bundle, addr, "RMWRES2", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
             const uint8_t* v = o.Vin(rf, 0);
             uint64_t lo = 0, hi = 0;
             std::memcpy(&lo, v, o.c);
@@ -1245,7 +1522,7 @@ protected:
             uint32_t pos = 0;
             if ( o.a & 1 ) o.setX(rf, pos++, lo);
             if ( o.a & 2 ) o.setX(rf, pos++, hi);
-        }, { A64Reg::T3, rz(rs_), rz(rs_ + 1) }, out, { A64Reg::VT0 });
+        }, { A64Reg::T3, rz(rs_), rz(rs_ + 1) }, out, { A64Reg::VT0 }), A64Tc::INT_ALU);
         j->c = elem;
         j->a = (rs_ != 31 ? 1 : 0) | (rs_ + 1 != 31 ? 2 : 0);
         if ( A ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
@@ -1283,7 +1560,7 @@ protected:
         }
         if ( R ) add(bundle, new VanadisFenceInstruction(addr, hw_thr, options, VANADIS_LOAD_STORE_FENCE));
         loadInt(bundle, addr, rs(rn), 0, A64Reg::T1, bytes, false, MEM_TRANSACTION_LLSC_LOAD);
-        auto* i = op(bundle, addr, "ATOMICOP", INST_INT_ARITH, atomicOp, { A64Reg::T1, rz(rs_) }, { A64Reg::T2 });
+        auto* i = tc(op(bundle, addr, "ATOMICOP", INST_INT_ARITH, atomicOp, { A64Reg::T1, rz(rs_) }, { A64Reg::T2 }), A64Tc::INT_ALU);
         i->b = kind;
         i->c = bytes;
         rmwStoreAndRetry(bundle, addr, rs(rn), bytes, rt, A);
@@ -1357,13 +1634,13 @@ protected:
         if ( key == FPCR_KEY ) {
             if ( L ) {
                 if ( rt == 31 ) { add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options)); return true; }
-                auto* i = op(bundle, addr, "MRS.FPCR", INST_INT_ARITH, movReg, { A64Reg::FPCR }, { static_cast<uint16_t>(rt) });
+                auto* i = tc(op(bundle, addr, "MRS.FPCR", INST_INT_ARITH, movReg, { A64Reg::FPCR }, { static_cast<uint16_t>(rt) }), A64Tc::INT_ALU);
                 i->a = 1; i->d = HAS_RD;
             }
             else {
-                auto* i = op(bundle, addr, "MSR.FPCR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+                auto* i = tc(op(bundle, addr, "MSR.FPCR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
                     o.setX(rf, 0, o.X(rf, 0) & o.imm);
-                }, { rz(rt) }, { A64Reg::FPCR });
+                }, { rz(rt) }, { A64Reg::FPCR }), A64Tc::INT_ALU);
                 i->imm = FPCR_MASK;
             }
             return true;
@@ -1371,14 +1648,14 @@ protected:
         if ( key == FPSR_KEY ) {
             VanadisArm64Inst* i;
             if ( L ) {
-                i = op(bundle, addr, "MRS.FPSR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+                i = tc(op(bundle, addr, "MRS.FPSR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
                     if ( o.countISAIntRegOut() ) o.setX(rf, 0, o.fp_state->fpsr);
-                }, {}, dz(rt));
+                }, {}, dz(rt)), A64Tc::INT_ALU);
             }
             else {
-                i = op(bundle, addr, "MSR.FPSR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
+                i = tc(op(bundle, addr, "MSR.FPSR", INST_INT_ARITH, [](VanadisArm64Inst& o, VanadisRegisterFile* rf) {
                     o.fp_state->fpsr = static_cast<uint32_t>(o.X(rf, 0) & o.imm);
-                }, { rz(rt) }, {});
+                }, { rz(rt) }, {}), A64Tc::INT_ALU);
                 i->imm = FPSR_MASK;
             }
             i->fp_state       = &fp_state_;

@@ -140,6 +140,9 @@ public:
         { "branch_units", "Number of branch units", "1" },
         { "branch_unit_cycles", "Cycles per branch", "int_arith_cycles"},
         { "issues_per_cycle", "Number of instruction issues per cycle", "2" },
+        { "integer_arith_pipe_order", "Order in which issue tries the pipes of the integer unit, by pipe index (the bits of a timing class's pipe mask); empty is index order", "[]" },
+        { "fp_arith_pipe_order", "Order in which issue tries the pipes of the floating-point unit, by pipe index; empty is index order", "[]" },
+        { "branch_pipe_order", "Order in which issue tries the pipes of the branch unit, by pipe index; empty is index order", "[]" },
         { "fetches_per_cycle", "Number of instruction fetches per cycle", "2" },
         { "retires_per_cycle", "Number of instruction retires per cycle", "2" },
         { "decodes_per_cycle", "Number of instruction decodes per cycle", "2" },
@@ -247,6 +250,12 @@ private:
     int performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t& rob_start, int& unallocated_memory_op_seen);
     // rename_at_dispatch: every input the instruction reads at issue has its value; include_store_data adds store data.
     bool inputValuesReady(const VanadisInstruction* ins, const bool include_store_data) const;
+    // A consumer may take this producer's result as its accumulator before the producer has executed.
+    bool accumulatorBypassed(const VanadisInstruction* ins, const VanadisInstruction* producer) const;
+    // A vector producer and consumer in different forwarding regions take one more cycle.
+    bool forwardingPenalty(const VanadisInstruction* producer, const VanadisInstruction* consumer) const;
+    // Reorders a unit's pipes by the order a parameter gives.
+    void orderPipes(SST::Params& params, const char* key, std::vector<VanadisFunctionalUnit*>& units);
     // rename_at_dispatch: the instruction no longer produces its output registers (it retired or was squashed).
     void clearRegisterProducers(const VanadisInstruction* ins);
     int  performIssue(const uint64_t cycle, int hwThr, uint32_t& rob_start, int& unallocated_memory_op_seen);

@@ -101,6 +101,7 @@ VanadisARM64Decoder::decodeSimdThreeSame(uint64_t addr, uint32_t ins, VanadisIns
             // FMLAL, FMLSL, FMLAL2, FMLSL2
             if ( scalar || sz ) return false;
             auto* i = fpOp(bundle, addr, "FMLAL", INST_FP_ARITH, simdFpMulAddLong, { A64Reg::FPCR }, {}, { rn, rm, rd }, { rd });
+            tc(i, A64Tc::FP_MLA);
             i->b = Q ? 16 : 8;
             i->c = s;
             i->d = U ? 1 : 0;
@@ -129,6 +130,7 @@ VanadisARM64Decoder::decodeSimdThreeSame(uint64_t addr, uint32_t ins, VanadisIns
         const bool     needs_d = code == 0x19 || code == 0x39;
         auto* i = fpOp(bundle, addr, code == 0x5F ? "FDIV.V" : "FP3S", code == 0x5F ? INST_FP_DIV : INST_FP_ARITH, simdFpThreeSame, { A64Reg::FPCR }, {},
             needs_d ? std::vector<uint16_t> { rn, rm, rd } : std::vector<uint16_t> { rn, rm }, { rd });
+        tc(i, fpThreeSameClass(code, a, scalar ? (1u << a) : (Q ? 16u : 8u)));
         i->a = a;
         i->b = scalar ? (1u << a) : (Q ? 16 : 8);
         i->c = code;
@@ -159,6 +161,7 @@ VanadisARM64Decoder::decodeSimdThreeSame(uint64_t addr, uint32_t ins, VanadisIns
     const bool needs_d = (opcode == 3 && U && size != 0) || opcode == 15 || opcode == 18;
     auto* i = fpOp(bundle, addr, "INT3S", INST_FP_ARITH, simdThreeSame, {}, {},
         needs_d ? std::vector<uint16_t> { rn, rm, rd } : std::vector<uint16_t> { rn, rm }, { rd });
+    tc(i, intThreeSameClass(opcode, U, size));
     i->a = opcode == 3 ? 0 : size;
     i->b = scalar ? (1u << size) : (Q ? 16 : 8);
     i->c = (static_cast<uint32_t>(U) << 5) | opcode;
@@ -194,6 +197,7 @@ VanadisARM64Decoder::decodeSimdThreeSameFp16(uint64_t addr, uint32_t ins, Vanadi
     const bool needs_d = code == 0x19 || code == 0x39;
     auto* i = fpOp(bundle, addr, code == 0x5F ? "FDIV.H" : "FP3S.H", code == 0x5F ? INST_FP_DIV : INST_FP_ARITH, simdFpThreeSame, { A64Reg::FPCR }, {},
         needs_d ? std::vector<uint16_t> { rn, rm, rd } : std::vector<uint16_t> { rn, rm }, { rd });
+    tc(i, fpThreeSameClass(code, 1, scalar ? 2u : (Q ? 16u : 8u)));
     i->a = 1;
     i->b = scalar ? 2 : (Q ? 16 : 8);
     i->c = code;
@@ -213,6 +217,7 @@ VanadisARM64Decoder::decodeSimdThreeExt(uint64_t addr, uint32_t ins, VanadisInst
     if ( U && opcode <= 1 ) {
         if ( size != 1 && size != 2 ) return false;
         auto* i = fpOp(bundle, addr, "SQRDMLAH", INST_FP_ARITH, simdSatMulAccum, {}, {}, { rn, rm, rd }, { rd });
+        tc(i, A64Tc::V_MLA);
         i->a = size;
         i->b = scalar ? (1u << size) : reg_bytes;
         i->c = opcode;
@@ -222,6 +227,7 @@ VanadisARM64Decoder::decodeSimdThreeExt(uint64_t addr, uint32_t ins, VanadisInst
     if ( opcode == 2 || (opcode == 3 && !U) ) {
         if ( size != 2 ) return false;
         auto* i = op(bundle, addr, "DOT", INST_FP_ARITH, simdDot, {}, {}, { rn, rm, rd }, { rd });
+        tc(i, A64Tc::V_DOT);
         i->b = reg_bytes;
         i->c = opcode == 3 ? 2 : (U ? 1 : 0);
         return true;
@@ -229,6 +235,7 @@ VanadisARM64Decoder::decodeSimdThreeExt(uint64_t addr, uint32_t ins, VanadisInst
     if ( opcode == 4 || (opcode == 5 && !U) ) {
         if ( size != 2 || !Q ) return false;
         auto* i = op(bundle, addr, "MMLA", INST_FP_ARITH, simdMmla, {}, {}, { rn, rm, rd }, { rd });
+        tc(i, A64Tc::V_DOT);
         i->c = opcode == 5 ? 2 : (U ? 1 : 0);
         return true;
     }
@@ -236,6 +243,7 @@ VanadisARM64Decoder::decodeSimdThreeExt(uint64_t addr, uint32_t ins, VanadisInst
     if ( opcode >= 8 && opcode <= 11 ) {
         if ( size == 0 || (size == 3 && !Q) ) return false;
         auto* i = fpOp(bundle, addr, "FCMLA", INST_FP_ARITH, simdFcmla, { A64Reg::FPCR }, {}, { rn, rm, rd }, { rd });
+        tc(i, A64Tc::FP_COMPLEX_MLA);
         i->a = size;
         i->b = reg_bytes;
         i->d = opcode & 3;
@@ -244,6 +252,7 @@ VanadisARM64Decoder::decodeSimdThreeExt(uint64_t addr, uint32_t ins, VanadisInst
     if ( opcode == 12 || opcode == 14 ) {
         if ( size == 0 || (size == 3 && !Q) ) return false;
         auto* i = fpOp(bundle, addr, "FCADD", INST_FP_ARITH, simdFcadd, { A64Reg::FPCR }, {}, { rn, rm }, { rd });
+        tc(i, A64Tc::FP_ALU);
         i->a = size;
         i->b = reg_bytes;
         i->d = opcode == 14 ? 1 : 0;
@@ -252,11 +261,13 @@ VanadisARM64Decoder::decodeSimdThreeExt(uint64_t addr, uint32_t ins, VanadisInst
     if ( opcode == 15 ) {
         if ( size == 1 ) {
             auto* i = op(bundle, addr, "BFDOT", INST_FP_ARITH, simdBfDot, {}, {}, { rn, rm, rd }, { rd });
+            tc(i, A64Tc::BF_DOT);
             i->b = reg_bytes;
             return true;
         }
         if ( size == 3 ) {
             auto* i = op(bundle, addr, "BFMLAL", INST_FP_ARITH, simdBfMlal, { A64Reg::FPCR }, {}, { rn, rm, rd }, { rd });
+            tc(i, A64Tc::FP_COMPLEX_MLA);
             i->c = Q ? 1 : 0;
             markMultiplyAdd(i, 2);
             return true;
@@ -264,7 +275,7 @@ VanadisARM64Decoder::decodeSimdThreeExt(uint64_t addr, uint32_t ins, VanadisInst
         return false;
     }
     if ( opcode == 13 && size == 1 && Q ) {
-        op(bundle, addr, "BFMMLA", INST_FP_ARITH, simdBfMmla, {}, {}, { rn, rm, rd }, { rd });
+        tc(op(bundle, addr, "BFMMLA", INST_FP_ARITH, simdBfMmla, {}, {}, { rn, rm, rd }, { rd }), A64Tc::BF_MMLA);
         return true;
     }
     return false;
@@ -288,6 +299,7 @@ VanadisARM64Decoder::decodeSimdMisc(uint64_t addr, uint32_t ins, VanadisInstruct
             if ( opcode == 0x16 && !U && size == 2 && !scalar ) {
                 auto* i = fpOp(bundle, addr, "BFCVTN", INST_FP_ARITH, simdBfConvertNarrow, { A64Reg::FPCR }, {},
                     Q ? std::vector<uint16_t> { rn, rd } : std::vector<uint16_t> { rn }, { rd });
+                tc(i, A64Tc::BF_CVT);
                 i->d = Q;
                 return true;
             }
@@ -297,6 +309,7 @@ VanadisARM64Decoder::decodeSimdMisc(uint64_t addr, uint32_t ins, VanadisInstruct
                 // FCVTXN to a single.
                 if ( !(opcode == 0x16 && U && sz) ) return false;
                 auto* i = fpOp(bundle, addr, "FCVTXN.S", INST_FP_ARITH, simdFpWidthConvert, { A64Reg::FPCR }, {}, { rn }, { rd });
+                tc(i, A64Tc::FP_CVT);
                 i->a = 2;
                 i->c = 1;
                 i->d = 2;
@@ -306,6 +319,7 @@ VanadisARM64Decoder::decodeSimdMisc(uint64_t addr, uint32_t ins, VanadisInstruct
                 if ( U && !sz ) return false;
                 auto* i = fpOp(bundle, addr, "FCVTN", INST_FP_ARITH, simdFpWidthConvert, { A64Reg::FPCR }, {},
                     Q ? std::vector<uint16_t> { rn, rd } : std::vector<uint16_t> { rn }, { rd });
+                tc(i, narrow == 1 ? A64Tc::FP_CVT_S : A64Tc::FP_CVT);
                 i->a = narrow;
                 i->c = U ? 1 : 0;
                 i->d = Q;
@@ -313,6 +327,7 @@ VanadisARM64Decoder::decodeSimdMisc(uint64_t addr, uint32_t ins, VanadisInstruct
             }
             if ( U ) return false;
             auto* i = fpOp(bundle, addr, "FCVTL", INST_FP_ARITH, simdFpWidthConvert, { A64Reg::FPCR }, {}, { rn }, { rd });
+            tc(i, narrow == 1 ? A64Tc::FP_CVT_S : A64Tc::FP_CVT);
             i->a = narrow;
             i->c = 2;
             i->d = Q;
@@ -347,6 +362,7 @@ VanadisARM64Decoder::decodeSimdMisc(uint64_t addr, uint32_t ins, VanadisInstruct
         if ( !valid ) return false;
         const uint32_t a = sz ? 3 : 2;
         auto* i = fpOp(bundle, addr, code == 0x7F ? "FSQRT.V" : "FPMISC", code == 0x7F ? INST_FP_DIV : INST_FP_ARITH, simdFpMisc, { A64Reg::FPCR }, {}, { rn }, { rd });
+        tc(i, fpMiscClass(code, a, scalar ? (1u << a) : reg_bytes));
         i->a = a;
         i->b = scalar ? (1u << a) : reg_bytes;
         i->c = code;
@@ -360,6 +376,7 @@ VanadisARM64Decoder::decodeSimdMisc(uint64_t addr, uint32_t ins, VanadisInstruct
     if ( int_estimate ) {
         if ( scalar || sz ) return false;
         auto* i = fpOp(bundle, addr, "URECPE", INST_FP_ARITH, simdMisc, {}, {}, { rn }, { rd });
+        tc(i, reg_bytes == 16 ? A64Tc::FP_CVT_S : A64Tc::FP_CVT);
         i->a = 2;
         i->b = reg_bytes;
         i->c = U ? 29 : 28;
@@ -403,6 +420,7 @@ VanadisARM64Decoder::decodeSimdMisc(uint64_t addr, uint32_t ins, VanadisInstruct
     if ( !valid ) return false;
     auto* i = fpOp(bundle, addr, "INTMISC", INST_FP_ARITH, simdMisc, {}, {},
         needs_d ? std::vector<uint16_t> { rn, rd } : std::vector<uint16_t> { rn }, { rd });
+    tc(i, intMiscClass(opcode, U));
     i->a = a;
     i->b = scalar ? (1u << a) : reg_bytes;
     i->c = (ud << 5) | opcode;
@@ -444,6 +462,7 @@ VanadisARM64Decoder::decodeSimdMiscFp16(uint64_t addr, uint32_t ins, VanadisInst
     }
     if ( !valid ) return false;
     auto* i = fpOp(bundle, addr, code == 0x7F ? "FSQRT.H" : "FPMISC.H", code == 0x7F ? INST_FP_DIV : INST_FP_ARITH, simdFpMisc, { A64Reg::FPCR }, {}, { rn }, { rd });
+    tc(i, fpMiscClass(code, 1, scalar ? 2u : (Q ? 16u : 8u)));
     i->a = 1;
     i->b = scalar ? 2 : (Q ? 16 : 8);
     i->c = code;
@@ -474,6 +493,7 @@ VanadisARM64Decoder::decodeSimdThreeDiff(uint64_t addr, uint32_t ins, VanadisIns
     const bool high_narrow = (opcode == 4 || opcode == 6) && Q;
     auto* i = fpOp(bundle, addr, "INT3D", INST_FP_ARITH, simdThreeDiff, {}, {},
         (accum || high_narrow) ? std::vector<uint16_t> { rn, rm, rd } : std::vector<uint16_t> { rn, rm }, { rd });
+    tc(i, intThreeDiffClass(opcode));
     i->a = size;
     i->b = 16;
     i->c = (static_cast<uint32_t>(U) << 4) | opcode;
@@ -498,6 +518,7 @@ VanadisARM64Decoder::decodeSimdShiftImm(uint64_t addr, uint32_t ins, VanadisInst
     if ( opcode == 28 || opcode == 31 ) {
         if ( a == 0 || (!scalar && a == 3 && !Q) ) return false;
         auto* i = fpOp(bundle, addr, "FIXCVT.V", INST_FP_ARITH, simdFpFixed, { A64Reg::FPCR }, {}, { rn }, { rd });
+        tc(i, cvtClassOf(scalar ? 1u : reg_bytes >> a));
         i->a = a;
         i->b = scalar ? (1u << a) : reg_bytes;
         i->c = (opcode == 31 ? 0u : 2u) + (U ? 1u : 0u);
@@ -558,6 +579,7 @@ VanadisARM64Decoder::decodeSimdShiftImm(uint64_t addr, uint32_t ins, VanadisInst
     if ( !valid ) return false;
     auto* i = fpOp(bundle, addr, "SHIFT.V", INST_FP_ARITH, simdShiftImm, {}, {},
         needs_d ? std::vector<uint16_t> { rn, rd } : std::vector<uint16_t> { rn }, { rd });
+    tc(i, shiftImmClass(opcode, U));
     i->a = a;
     i->b = scalar ? (1u << a) : reg_bytes;
     i->c = (static_cast<uint32_t>(U) << 5) | opcode;
@@ -625,6 +647,7 @@ VanadisARM64Decoder::decodeSimdModifiedImm(uint64_t addr, uint32_t ins, VanadisI
     if ( invert ) pattern = ~pattern;
     auto* i = op(bundle, addr, "MOVI", INST_FP_ARITH, simdImm, {}, {},
         kind ? std::vector<uint16_t> { rd } : std::vector<uint16_t> {}, { rd });
+    tc(i, A64Tc::V_MISC);
     i->b = reg_bytes;
     i->c = kind;
     i->imm = pattern;
@@ -647,6 +670,7 @@ VanadisARM64Decoder::decodeSimdCopy(uint64_t addr, uint32_t ins, VanadisInstruct
     if ( scalar ) {
         if ( op_bit || imm4 != 0 ) return false;
         auto* i = op(bundle, addr, "DUP.S", INST_FP_ARITH, simdDupElem, {}, {}, { rn16 }, { rd16 });
+        tc(i, A64Tc::V_MISC);
         i->a = size;
         i->b = bytes;
         i->c = index_off;
@@ -655,6 +679,7 @@ VanadisARM64Decoder::decodeSimdCopy(uint64_t addr, uint32_t ins, VanadisInstruct
     if ( op_bit ) {
         if ( !Q ) return false;
         auto* i = op(bundle, addr, "INS.E", INST_FP_ARITH, simdInsElem, {}, {}, { rd16, rn16 }, { rd16 });
+        tc(i, A64Tc::V_MISC);
         i->a = size;
         i->c = index_off;
         i->d = (imm4 >> size) << size;
@@ -664,6 +689,7 @@ VanadisARM64Decoder::decodeSimdCopy(uint64_t addr, uint32_t ins, VanadisInstruct
     case 0: {
         if ( size == 3 && !Q ) return false;
         auto* i = op(bundle, addr, "DUP.E", INST_FP_ARITH, simdDupElem, {}, {}, { rn16 }, { rd16 });
+        tc(i, A64Tc::V_MISC);
         i->a = size;
         i->b = reg_bytes;
         i->c = index_off;
@@ -672,6 +698,7 @@ VanadisARM64Decoder::decodeSimdCopy(uint64_t addr, uint32_t ins, VanadisInstruct
     case 1: {
         if ( size == 3 && !Q ) return false;
         auto* i = op(bundle, addr, "DUP.G", INST_FP_ARITH, simdDupGp, { rz(rn) }, {}, {}, { rd16 });
+        tc(i, A64Tc::FP_MOVE_FROM_GP);
         i->a = size;
         i->b = reg_bytes;
         return true;
@@ -679,6 +706,7 @@ VanadisARM64Decoder::decodeSimdCopy(uint64_t addr, uint32_t ins, VanadisInstruct
     case 3: {
         if ( !Q ) return false;
         auto* i = op(bundle, addr, "INS.G", INST_FP_ARITH, simdInsGp, { rz(rn) }, {}, { rd16 }, { rd16 });
+        tc(i, A64Tc::FP_INSERT_FROM_GP);
         i->a = size;
         i->c = index_off;
         return true;
@@ -693,6 +721,7 @@ VanadisARM64Decoder::decodeSimdCopy(uint64_t addr, uint32_t ins, VanadisInstruct
             return false;
         }
         auto* i = op(bundle, addr, "MOV.E2G", INST_FP_ARITH, simdMovToGp, {}, { rd == 31 ? A64Reg::T1 : rd16 }, { rn16 }, {});
+        tc(i, A64Tc::FP_MOVE_TO_GP);
         i->a = size;
         i->c = index_off;
         i->d = (sign ? 1u : 0u) | (Q ? 0u : 2u);
@@ -711,6 +740,7 @@ VanadisARM64Decoder::decodeSimdPermute(uint64_t addr, uint32_t ins, VanadisInstr
     const uint16_t rm = bits(ins, 20, 16), rn = bits(ins, 9, 5), rd = bits(ins, 4, 0);
     if ( (opcode & 3) == 0 || (size == 3 && !Q) ) return false;
     auto* i = op(bundle, addr, "PERMUTE", INST_FP_ARITH, simdPermute, {}, {}, { rn, rm }, { rd });
+    tc(i, A64Tc::V_MISC);
     i->a = size;
     i->b = Q ? 16 : 8;
     i->c = opcode;
@@ -730,6 +760,7 @@ VanadisARM64Decoder::decodeSimdTable(uint64_t addr, uint32_t ins, VanadisInstruc
     sources.push_back(rm);
     if ( tbx ) sources.push_back(rd);
     auto* i = op(bundle, addr, "TBL", INST_FP_ARITH, simdTable, {}, {}, sources, { rd });
+    tc(i, (len + (tbx ? 1u : 0u)) <= 2 ? A64Tc::V_MISC : A64Tc::V_TBL_LONG);
     i->b = Q ? 16 : 8;
     i->c = len;
     i->d = tbx;
@@ -745,6 +776,7 @@ VanadisARM64Decoder::decodeSimdExt(uint64_t addr, uint32_t ins, VanadisInstructi
     const uint16_t rm = bits(ins, 20, 16), rn = bits(ins, 9, 5), rd = bits(ins, 4, 0);
     if ( bits(ins, 23, 22) != 0 || (!Q && (imm4 & 8)) ) return false;
     auto* i = op(bundle, addr, "EXT", INST_FP_ARITH, simdExt, {}, {}, { rn, rm }, { rd });
+    tc(i, A64Tc::V_MISC);
     i->b = Q ? 16 : 8;
     i->c = imm4;
     return true;
@@ -762,6 +794,7 @@ VanadisARM64Decoder::decodeSimdAcross(uint64_t addr, uint32_t ins, VanadisInstru
         if ( size & 1 ) return false;
         if ( U && !Q ) return false;
         auto* i = fpOp(bundle, addr, "FPACROSS", INST_FP_ARITH, simdFpReduce, { A64Reg::FPCR }, {}, { rn }, { rd });
+        tc(i, A64Tc::FP_REDUCE);
         i->a = U ? 2 : 1;
         i->b = Q ? 16 : 8;
         i->c = (s << 1) | (opcode == 15 ? 1u : 0u);
@@ -770,6 +803,7 @@ VanadisARM64Decoder::decodeSimdAcross(uint64_t addr, uint32_t ins, VanadisInstru
     if ( opcode != 3 && opcode != 10 && opcode != 26 && !(opcode == 27 && !U) ) return false;
     if ( size == 3 || (size == 2 && !Q) ) return false;
     auto* i = op(bundle, addr, "ACROSS", INST_FP_ARITH, simdAcross, {}, {}, { rn }, { rd });
+    tc(i, reduceClass((Q ? 16u : 8u) >> size));
     i->a = size;
     i->b = Q ? 16 : 8;
     i->c = opcode;
@@ -787,6 +821,7 @@ VanadisARM64Decoder::decodeSimdScalarPair(uint64_t addr, uint32_t ins, VanadisIn
     if ( opcode == 27 ) {
         if ( U || size != 3 ) return false;
         auto* i = op(bundle, addr, "ADDP.S", INST_FP_ARITH, simdAcross, {}, {}, { rn }, { rd });
+        tc(i, A64Tc::V_ALU);
         i->a = 3;
         i->b = 16;
         i->c = 27;
@@ -805,6 +840,7 @@ VanadisARM64Decoder::decodeSimdScalarPair(uint64_t addr, uint32_t ins, VanadisIn
         a = 1;
     }
     auto* i = fpOp(bundle, addr, "FPPAIR", INST_FP_ARITH, simdFpReduce, { A64Reg::FPCR }, {}, { rn }, { rd });
+    tc(i, A64Tc::FP_PAIRWISE);
     i->a = a;
     i->b = 2u << a;
     i->c = code;
@@ -827,6 +863,7 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
         if ( scalar || (size != 1 && size != 2) ) return false;
         if ( size == 2 && (L || !Q) ) return false;
         auto* i = fpOp(bundle, addr, "FCMLA.E", INST_FP_ARITH, simdFcmla, { A64Reg::FPCR }, {}, { rn, rm5, rd }, { rd });
+        tc(i, A64Tc::FP_COMPLEX_MLA);
         i->a = size;
         i->b = reg_bytes;
         i->c = 1;
@@ -861,6 +898,7 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
         const uint32_t code = opcode == 1 ? 0 : opcode == 5 ? 1 : (U ? 3 : 2);
         auto* i = fpOp(bundle, addr, "FPELEM", INST_FP_ARITH, simdFpIndexed, { A64Reg::FPCR }, {},
             code < 2 ? std::vector<uint16_t> { rn, rm, rd } : std::vector<uint16_t> { rn, rm }, { rd });
+        tc(i, code < 2 ? A64Tc::FP_MLA : A64Tc::FP_MUL);
         i->a = a;
         i->b = scalar ? (1u << a) : reg_bytes;
         i->c = code;
@@ -873,6 +911,7 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
     if ( (!U && (opcode == 0 || opcode == 4)) || (U && (opcode == 8 || opcode == 12)) ) {
         if ( scalar || size != 2 ) return false;
         auto* i = fpOp(bundle, addr, "FMLAL.E", INST_FP_ARITH, simdFpMulAddLong, { A64Reg::FPCR }, {}, { rn, rm4, rd }, { rd });
+        tc(i, A64Tc::FP_MLA);
         i->b = reg_bytes;
         i->c = (opcode & 4) ? 1 : 0;
         i->d = (U ? 1u : 0u) | 2u;
@@ -887,6 +926,7 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
         if ( opcode == 14 ) {
             if ( size != 2 ) return false;
             auto* i = op(bundle, addr, "DOT.E", INST_FP_ARITH, simdDot, {}, {}, { rn, rm5, rd }, { rd });
+            tc(i, A64Tc::V_DOT);
             i->b = reg_bytes;
             i->c = U ? 1 : 0;
             i->d = 1;
@@ -895,6 +935,7 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
         }
         if ( size == 0 || size == 2 ) {
             auto* i = op(bundle, addr, "USDOT.E", INST_FP_ARITH, simdDot, {}, {}, { rn, rm5, rd }, { rd });
+            tc(i, A64Tc::V_DOT);
             i->b = reg_bytes;
             i->c = size == 0 ? 3 : 2;
             i->d = 1;
@@ -903,12 +944,14 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
         }
         if ( size == 1 ) {
             auto* i = op(bundle, addr, "BFDOT.E", INST_FP_ARITH, simdBfDot, {}, {}, { rn, rm5, rd }, { rd });
+            tc(i, A64Tc::BF_DOT);
             i->b = reg_bytes;
             i->d = 1;
             i->imm = group;
             return true;
         }
         auto* i = op(bundle, addr, "BFMLAL.E", INST_FP_ARITH, simdBfMlal, { A64Reg::FPCR }, {}, { rn, rm4, rd }, { rd });
+        tc(i, A64Tc::FP_COMPLEX_MLA);
         i->c = Q ? 1 : 0;
         i->d = 1;
         i->imm = (H << 2) | (L << 1) | M;
@@ -946,6 +989,7 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
         const bool needs_d = same == 1 || same == 2 || same >= 5;
         auto* i = fpOp(bundle, addr, "INT.E", INST_FP_ARITH, simdIndexedSame, {}, {},
             needs_d ? std::vector<uint16_t> { rn, rm, rd } : std::vector<uint16_t> { rn, rm }, { rd });
+        tc(i, (same == 1 || same == 2 || same >= 5) ? A64Tc::V_MLA : A64Tc::V_MUL);
         i->a = size;
         i->b = scalar ? (1u << size) : reg_bytes;
         i->c = static_cast<uint32_t>(same);
@@ -967,6 +1011,7 @@ VanadisARM64Decoder::decodeSimdIndexed(uint64_t addr, uint32_t ins, VanadisInstr
     if ( scalar && !saturating ) return false;
     auto* i = fpOp(bundle, addr, "INTL.E", INST_FP_ARITH, simdIndexedLong, {}, {},
         code == 12 || code == 13 ? std::vector<uint16_t> { rn, rm } : std::vector<uint16_t> { rn, rm, rd }, { rd });
+    tc(i, (code == 12 || code == 13) ? A64Tc::V_MUL : A64Tc::V_MLA);
     i->a = size;
     i->c = (static_cast<uint32_t>(U) << 4) | code;
     i->d = (Q && !scalar ? 1u : 0u) | (scalar ? 2u : 0u);
@@ -985,6 +1030,7 @@ VanadisARM64Decoder::decodeCryptoAes(uint64_t addr, uint32_t ins, VanadisInstruc
     const uint32_t code = opcode - 4;
     auto* i = op(bundle, addr, "AES", INST_FP_ARITH, aes, {}, {},
         code < 2 ? std::vector<uint16_t> { rd, rn } : std::vector<uint16_t> { rn }, { rd });
+    tc(i, A64Tc::CRYPTO_AES);
     i->c = code;
     return true;
 }
@@ -1001,17 +1047,19 @@ VanadisARM64Decoder::decodeCryptoSha3Reg(uint64_t addr, uint32_t ins, VanadisIns
     switch ( opcode ) {
     case 0: case 1: case 2:
         i = op(bundle, addr, "SHA1HASH", INST_FP_ARITH, sha1Hash, {}, {}, { rd, rn, rm }, { rd });
+        tc(i, A64Tc::CRYPTO_SHA_SLOW);
         i->c = opcode;
         return true;
     case 3:
-        op(bundle, addr, "SHA1SU0", INST_FP_ARITH, sha1Su0, {}, {}, { rd, rn, rm }, { rd });
+        tc(op(bundle, addr, "SHA1SU0", INST_FP_ARITH, sha1Su0, {}, {}, { rd, rn, rm }, { rd }), A64Tc::CRYPTO_SHA_FAST);
         return true;
     case 4: case 5:
         i = op(bundle, addr, "SHA256H", INST_FP_ARITH, sha256Hash, {}, {}, { rd, rn, rm }, { rd });
+        tc(i, A64Tc::CRYPTO_SHA_SLOW);
         i->c = opcode - 4;
         return true;
     case 6:
-        op(bundle, addr, "SHA256SU1", INST_FP_ARITH, sha256Su1, {}, {}, { rd, rn, rm }, { rd });
+        tc(op(bundle, addr, "SHA256SU1", INST_FP_ARITH, sha256Su1, {}, {}, { rd, rn, rm }, { rd }), A64Tc::CRYPTO_SHA_FAST);
         return true;
     default: return false;
     }
@@ -1026,9 +1074,9 @@ VanadisARM64Decoder::decodeCryptoSha2Reg(uint64_t addr, uint32_t ins, VanadisIns
     const uint16_t rn = bits(ins, 9, 5), rd = bits(ins, 4, 0);
     if ( bit(ins, 29) || bits(ins, 23, 22) != 0 ) return false;
     switch ( opcode ) {
-    case 0: op(bundle, addr, "SHA1H", INST_FP_ARITH, sha1Fixed, {}, {}, { rn }, { rd }); return true;
-    case 1: op(bundle, addr, "SHA1SU1", INST_FP_ARITH, sha1Su1, {}, {}, { rd, rn }, { rd }); return true;
-    case 2: op(bundle, addr, "SHA256SU0", INST_FP_ARITH, sha256Su0, {}, {}, { rd, rn }, { rd }); return true;
+    case 0: tc(op(bundle, addr, "SHA1H", INST_FP_ARITH, sha1Fixed, {}, {}, { rn }, { rd }), A64Tc::CRYPTO_SHA_FAST); return true;
+    case 1: tc(op(bundle, addr, "SHA1SU1", INST_FP_ARITH, sha1Su1, {}, {}, { rd, rn }, { rd }), A64Tc::CRYPTO_SHA_FAST); return true;
+    case 2: tc(op(bundle, addr, "SHA256SU0", INST_FP_ARITH, sha256Su0, {}, {}, { rd, rn }, { rd }), A64Tc::CRYPTO_SHA_FAST); return true;
     default: return false;
     }
 }
@@ -1044,15 +1092,17 @@ VanadisARM64Decoder::decodeCryptoHigh(uint64_t addr, uint32_t ins, VanadisInstru
         const uint32_t kind = bits(ins, 22, 21);
         if ( kind == 3 ) return false;
         if ( kind == 2 ) {
-            op(bundle, addr, "SM3SS1", INST_FP_ARITH, sm3Ss1, {}, {}, { rn, rm, ra }, { rd });
+            tc(op(bundle, addr, "SM3SS1", INST_FP_ARITH, sm3Ss1, {}, {}, { rn, rm, ra }, { rd }), A64Tc::CRYPTO_SHA_FAST);
             return true;
         }
         auto* i = op(bundle, addr, "SHA3.4", INST_FP_ARITH, sha3Op, {}, {}, { rn, rm, ra }, { rd });
+        tc(i, A64Tc::CRYPTO_SHA3);
         i->c = kind;
         return true;
     }
     if ( bits(ins, 23, 21) == 0b010 && bits(ins, 15, 14) == 2 ) {
         auto* i = op(bundle, addr, "SM3TT", INST_FP_ARITH, sm3Tt, {}, {}, { rd, rn, rm }, { rd });
+        tc(i, A64Tc::CRYPTO_SHA_FAST);
         i->c = bits(ins, 11, 10);
         i->imm = bits(ins, 13, 12);
         return true;
@@ -1062,20 +1112,24 @@ VanadisARM64Decoder::decodeCryptoHigh(uint64_t addr, uint32_t ins, VanadisInstru
         if ( !o ) {
             if ( opcode == 3 ) {
                 auto* i = op(bundle, addr, "RAX1", INST_FP_ARITH, sha3Op, {}, {}, { rn, rm }, { rd });
+                tc(i, A64Tc::CRYPTO_SHA3);
                 i->c = 2;
                 return true;
             }
             auto* i = op(bundle, addr, "SHA512", INST_FP_ARITH, sha512Three, {}, {}, { rd, rn, rm }, { rd });
+            tc(i, A64Tc::CRYPTO_SHA_FAST);
             i->c = opcode;
             return true;
         }
         if ( opcode <= 1 ) {
             auto* i = op(bundle, addr, "SM3PART", INST_FP_ARITH, sm3Part, {}, {}, { rd, rn, rm }, { rd });
+            tc(i, A64Tc::CRYPTO_SHA_FAST);
             i->c = opcode;
             return true;
         }
         if ( opcode == 2 ) {
             auto* i = op(bundle, addr, "SM4EKEY", INST_FP_ARITH, sm4, {}, {}, { rn, rm }, { rd });
+            tc(i, A64Tc::CRYPTO_SHA_SLOW);
             i->c = 1;
             return true;
         }
@@ -1083,6 +1137,7 @@ VanadisARM64Decoder::decodeCryptoHigh(uint64_t addr, uint32_t ins, VanadisInstru
     }
     if ( bits(ins, 23, 21) == 0b100 ) {
         auto* i = op(bundle, addr, "XAR", INST_FP_ARITH, sha3Op, {}, {}, { rn, rm }, { rd });
+        tc(i, A64Tc::CRYPTO_SHA3);
         i->c = 3;
         i->imm = bits(ins, 15, 10);
         return true;
@@ -1090,11 +1145,12 @@ VanadisARM64Decoder::decodeCryptoHigh(uint64_t addr, uint32_t ins, VanadisInstru
     if ( bits(ins, 23, 12) == 0xC08 ) {
         const uint32_t opcode = bits(ins, 11, 10);
         if ( opcode == 0 ) {
-            op(bundle, addr, "SHA512SU0", INST_FP_ARITH, sha512Su0, {}, {}, { rd, rn }, { rd });
+            tc(op(bundle, addr, "SHA512SU0", INST_FP_ARITH, sha512Su0, {}, {}, { rd, rn }, { rd }), A64Tc::CRYPTO_SHA_FAST);
             return true;
         }
         if ( opcode == 1 ) {
             auto* i = op(bundle, addr, "SM4E", INST_FP_ARITH, sm4, {}, {}, { rd, rn }, { rd });
+            tc(i, A64Tc::CRYPTO_SHA_SLOW);
             i->c = 0;
             return true;
         }

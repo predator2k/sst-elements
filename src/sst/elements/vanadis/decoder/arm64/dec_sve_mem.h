@@ -81,6 +81,7 @@ VanadisARM64Decoder::sveContigLoad(uint64_t addr, VanadisInstructionBundle* bund
             std::vector<uint16_t> in { pg, A64Reg::VT0 };
             if ( c != 0 ) in.insert(in.end(), zs.begin(), zs.end());
             auto* i = op(bundle, addr, "SVE.MERGE", INST_FP_ARITH, contigMerge, {}, {}, in, zs);
+            tc(i, A64Tc::INT_INTERNAL);
             i->a = dt.log2_ebytes;
             i->b = dt.mbytes;
             i->c = nreg;
@@ -96,10 +97,11 @@ VanadisARM64Decoder::sveContigLoad(uint64_t addr, VanadisInstructionBundle* bund
         if ( o.d ) a += o.X(rf, 1) << o.c;
         o.setX(rf, 0, a + o.imm);
     }, index_reg != 0xFFFF ? std::vector<uint16_t> { base, index_reg } : std::vector<uint16_t> { base }, { A64Reg::T0 });
+    tc(b, A64Tc::INT_ALU);
     b->c = shift;
     b->d = index_reg != 0xFFFF;
     b->imm = static_cast<uint64_t>(imm);
-    op(bundle, addr, "SVE.FFINIT", INST_INT_ARITH, A64Sem::movImm, {}, { A64Reg::T3 })->imm = ~0ull;
+    tc(op(bundle, addr, "SVE.FFINIT", INST_INT_ARITH, A64Sem::movImm, {}, { A64Reg::T3 }), A64Tc::INT_INTERNAL)->imm = ~0ull;
     for ( uint32_t c = 0; c < image; c += chunk ) {
         uint32_t length = 0;
         for ( uint32_t part = 1; part <= 2; ++part ) {
@@ -117,6 +119,7 @@ VanadisARM64Decoder::sveContigLoad(uint64_t addr, VanadisInstructionBundle* bund
         std::vector<uint16_t> in { pg, A64Reg::VT0, A64Reg::VT1 };
         if ( c != 0 ) in.push_back(zt);
         auto* i = op(bundle, addr, "SVE.MERGEFF", INST_FP_ARITH, contigMergeFf, { A64Reg::T0 }, {}, in, { zt });
+        tc(i, A64Tc::INT_INTERNAL);
         i->a = dt.log2_ebytes;
         i->b = dt.mbytes;
         i->d = (dt.is_signed ? 1u : 0u) | (c == 0 ? 2u : 0u);
@@ -124,6 +127,7 @@ VanadisARM64Decoder::sveContigLoad(uint64_t addr, VanadisInstructionBundle* bund
         i->imm2 = length;
     }
     auto* u = op(bundle, addr, "SVE.FFR", INST_FP_ARITH, ffrUpdate, { A64Reg::T3 }, {}, { A64Reg::FFR }, { A64Reg::FFR });
+    tc(u, A64Tc::INT_INTERNAL);
     u->a = dt.log2_ebytes;
 }
 
@@ -143,6 +147,7 @@ VanadisARM64Decoder::sveContigStore(uint64_t addr, VanadisInstructionBundle* bun
         for ( uint32_t r = 0; r < nreg; ++r ) zs.push_back(static_cast<uint16_t>((zt + r) % 32));
         for ( uint32_t k = 0; k * vector_bytes < image; ++k ) out.push_back(temps[k]);
         auto* i = op(bundle, addr, "SVE.PACK", INST_FP_ARITH, contigPack, {}, {}, zs, out);
+        tc(i, A64Tc::INT_INTERNAL);
         i->a = log2_ebytes;
         i->b = mbytes;
         i->c = nreg;
@@ -178,7 +183,7 @@ VanadisARM64Decoder::sveGather(uint64_t addr, VanadisInstructionBundle* bundle, 
 {
     using namespace A64SveMem;
     const uint32_t elements = vector_bytes >> dt.log2_ebytes;
-    if ( ff ) op(bundle, addr, "SVE.FFINIT", INST_INT_ARITH, A64Sem::movImm, {}, { A64Reg::T3 })->imm = ~0ull;
+    if ( ff ) tc(op(bundle, addr, "SVE.FFINIT", INST_INT_ARITH, A64Sem::movImm, {}, { A64Reg::T3 }), A64Tc::INT_INTERNAL)->imm = ~0ull;
     for ( uint32_t e = 0; e < elements; ++e ) {
         auto* l = new VanadisArm64VecLoad(addr, hw_thr, options, gatherResolve,
             ff ? std::vector<uint16_t> { base, A64Reg::T3 } : std::vector<uint16_t> { base },
@@ -195,14 +200,16 @@ VanadisARM64Decoder::sveGather(uint64_t addr, VanadisInstructionBundle* bundle, 
         std::vector<uint16_t> in { pg, A64Reg::VT0 };
         if ( e != 0 ) in.push_back(A64Reg::VT1);
         auto* i = op(bundle, addr, "SVE.GMERGE", INST_FP_ARITH, gatherMerge, {}, {}, in, { A64Reg::VT1 });
+        tc(i, A64Tc::INT_INTERNAL);
         i->a = dt.log2_ebytes;
         i->b = dt.mbytes;
         i->c = e;
         i->d = (dt.is_signed ? 1u : 0u) | (e == 0 ? 2u : 0u);
     }
-    op(bundle, addr, "SVE.GCOPY", INST_FP_ARITH, A64Sve::copyZ, {}, {}, { A64Reg::VT1 }, { zt });
+    tc(op(bundle, addr, "SVE.GCOPY", INST_FP_ARITH, A64Sve::copyZ, {}, {}, { A64Reg::VT1 }, { zt }), A64Tc::SVE_GATHER_MERGE);
     if ( ff ) {
         auto* u = op(bundle, addr, "SVE.FFR", INST_FP_ARITH, ffrUpdate, { A64Reg::T3 }, {}, { A64Reg::FFR }, { A64Reg::FFR });
+        tc(u, A64Tc::INT_INTERNAL);
         u->a = dt.log2_ebytes;
     }
 }
@@ -291,6 +298,7 @@ VanadisARM64Decoder::decodeSveMem(uint64_t addr, uint32_t ins, VanadisInstructio
             l->m.has_index = b1513 == 0;
             add(bundle, l);
             auto* i = op(bundle, addr, "LD1RQ.M", INST_FP_ARITH, quadMerge, {}, {}, { pg, A64Reg::VT0 }, { zt });
+            tc(i, A64Tc::INT_INTERNAL);
             i->a = msz;
             i->b = seg;
             return true;
@@ -310,6 +318,7 @@ VanadisARM64Decoder::decodeSveMem(uint64_t addr, uint32_t ins, VanadisInstructio
             l->m.elements = vector_bytes >> dt.log2_ebytes;
             add(bundle, l);
             auto* i = op(bundle, addr, "LD1R.M", INST_FP_ARITH, replicateMerge, {}, {}, { pg, A64Reg::VT0 }, { zt });
+            tc(i, A64Tc::INT_INTERNAL);
             i->a = dt.log2_ebytes;
             i->b = dt.mbytes;
             i->d = dt.is_signed;
@@ -335,6 +344,7 @@ VanadisARM64Decoder::decodeSveMem(uint64_t addr, uint32_t ins, VanadisInstructio
                 add(bundle, l);
                 auto* i = op(bundle, addr, "FILL.M", INST_FP_ARITH, fillMerge, {}, {},
                     c == 0 ? std::vector<uint16_t> { A64Reg::VT0 } : std::vector<uint16_t> { A64Reg::VT0, target }, { target });
+                tc(i, A64Tc::INT_INTERNAL);
                 i->d = c == 0;
                 i->imm = c;
                 i->imm2 = chunk;

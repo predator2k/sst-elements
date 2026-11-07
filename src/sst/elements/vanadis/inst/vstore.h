@@ -80,6 +80,10 @@ public:
     // The store takes every store port of the cycle: one element of a scatter.
     virtual bool takesAllStorePorts() const { return false; }
 
+    // The second register of a store pair whose two registers fit one store port: it takes no port of its own.
+    bool sharesStorePort() const { return shares_store_port_; }
+    void markSharesStorePort() { shares_store_port_ = true; }
+
     // A plain store of one register reads its data register when it goes to memory, and a load may take its bytes.
     virtual bool forwardsDataToLoads() const { return MEM_TRANSACTION_NONE == memAccessType; }
 
@@ -205,6 +209,8 @@ public:
     VanadisStoreRegisterType getValueRegisterType() const { return regType; }
 
 protected:
+    bool shares_store_port_ = false;
+
     const int64_t            offset;
     const uint16_t           store_width;
     VanadisMemoryTransaction memAccessType;
