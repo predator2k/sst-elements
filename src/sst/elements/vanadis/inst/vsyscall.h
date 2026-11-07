@@ -68,6 +68,10 @@ public:
 
     virtual bool performIntRegisterRecovery() const override { return false; }
     virtual bool performFPRegisterRecovery() const override { return false; }
+
+    // The output registers are the current mappings of every ISA register rather than registers popped from the free
+    // stacks, so a squashed system call has nothing to return.
+    virtual void returnOutRegs( VanadisRegisterStack* int_stack, VanadisRegisterStack* fp_stack ) override {}
 };
 
 } // namespace Vanadis
