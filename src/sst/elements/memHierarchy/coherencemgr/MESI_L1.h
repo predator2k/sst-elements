@@ -283,6 +283,8 @@ private:
     State protocol_read_state_;   // E for MESI, S for MSI
     State protocol_exclusive_state_;   // E for MESI, M for MSI
     Cycle_t llsc_block_cycles_;
+    // pipelined_read_hits: a read hit does not hold the line until its response leaves.
+    bool pipelined_read_hits_ = false;
     Link* llsc_timeout_ = nullptr; // A self-link to trigger waiting requests when a LoadLink times out
 
     CacheArray<L1CacheLine>* cache_array_ = nullptr;

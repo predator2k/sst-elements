@@ -13,6 +13,7 @@
 // information, see the LICENSE file in the top level directory of the
 // distribution.
 
+#include <algorithm>
 #include <sst_config.h>
 #include <vector>
 #include "coherencemgr/MESI_L1.h"
@@ -37,6 +38,7 @@ MESIL1::MESIL1(ComponentId_t id, Params& params, Params& owner_params, bool pref
     snoop_l1_invs_ = params.find<bool>("snoop_l1_invalidations", false);
     bool MESI = params.find<bool>("protocol", true);
     llsc_block_cycles_ = params.find<Cycle_t>("llsc_block_cycles", 0);
+    pipelined_read_hits_ = params.find<bool>("pipelined_read_hits", false);
 
     std::string frequency = params.find<std::string>("cache_frequency", "");
 
@@ -299,8 +301,13 @@ bool MESIL1::handleGetS(MemEvent * event, bool in_mshr) {
                 line->atomicStart(timestamp_ + llsc_block_cycles_, event->getThreadID());
             }
             data.assign(line->getData()->begin() + (event->getAddr() - event->getBaseAddr()), line->getData()->begin() + (event->getAddr() - event->getBaseAddr() + event->getSize()));
-            send_time = sendResponseUp(event, &data, in_mshr, line->getTimestamp());
-            line->setTimestamp(send_time - 1);
+            {
+                const uint64_t line_time = line->getTimestamp();
+                send_time = sendResponseUp(event, &data, in_mshr, line_time);
+                // A pipelined read hit keeps the time the line was free at, so the next hit to the line is served in the
+                // next cycle and leaves one cycle later; the data were copied above, so values do not depend on it.
+                line->setTimestamp(pipelined_read_hits_ ? std::max(line_time, timestamp_) : send_time - 1);
+            }
             cleanUpAfterRequest(event, in_mshr);
             break;
         default:
@@ -2129,6 +2136,7 @@ void MESIL1::serialize_order(SST::Core::Serialization::serializer& ser) {
     SST_SER(protocol_exclusive_state_);
     SST_SER(protocol_read_state_);
     SST_SER(llsc_block_cycles_);
+    SST_SER(pipelined_read_hits_);
     SST_SER(llsc_timeout_);
     SST_SER(cache_array_);
     SST_SER(stat_event_stalled_for_lock);
