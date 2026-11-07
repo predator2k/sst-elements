@@ -37,6 +37,7 @@ public:
         /* Event hits & misses */
         {"CacheHits",               "Accesses that hit in the cache", "accesses", 1},
         {"CacheMisses",             "Accesses that missed in the cache", "accesses", 1},
+        {"streaming_writes",        "Write misses flagged as streaming writes (streaming_writes)", "events", 1},
         {"GetSHit_Arrival",         "GetS was handled at arrival and was a cache hit", "count", 1},
         {"GetXHit_Arrival",         "GetX was handled at arrival and was a cache hit", "count", 1},
         {"GetSXHit_Arrival",        "GetSX was handled at arrival and was a cache hit", "count", 1},
@@ -288,6 +289,10 @@ private:
     // streaming_writes: a write miss to line X is a streaming write when the two lines below X were write misses and the
     // lower one has been written in whole. The lines of the last write misses, newest last, and the bytes written in each.
     bool streaming_writes_ = false;
+    // streaming_write_on_retry: a write miss that waited in the MSHR before it went on is checked too.
+    bool streaming_write_on_retry_ = false;
+    // Write misses flagged as streaming writes.
+    Statistic<uint64_t>* stat_streaming_writes_ = nullptr;
     static constexpr size_t STREAM_LINES = 4;
     std::vector<std::pair<Addr, uint64_t>> write_miss_lines_;
     // Records bytes [offset, offset + size) of line written, when it is one of the last write-miss lines.
