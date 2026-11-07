@@ -254,7 +254,7 @@ bool Cache::processEvent(MemEventBase* ev, bool retry) {
     Addr addr = event->getBaseAddr();
 
     /* Arbitrate cache access - bank/link. Reject request on failure */
-    if (!arbitrateAccess(addr)) { // Disallow multiple requests to same line and/or bank in a single cycle
+    if (!arbitrateAccess(addr, event)) { // Disallow multiple requests to same line and/or bank in a single cycle
         if (mem_h_is_debug_addr(addr)) {
             std::stringstream id;
             id << "<" << event->getID().first << "," << event->getID().second << ">";
@@ -368,16 +368,21 @@ bool Cache::processEvent(MemEventBase* ev, bool retry) {
         coherenceMgr_->printDebugInfo();
 
     if (accepted)
-        updateAccessStatus(addr);
+        updateAccessStatus(addr, event);
 
     return accepted;
 }
 
 /* Arbitrate for access. Return whether successful */
-bool Cache::arbitrateAccess(Addr addr) {
+bool Cache::arbitrateAccess(Addr addr, MemEvent* event) {
     if (!banked_) {
         auto found = addrsThisCycle_.find(addr);
-        return found == addrsThisCycle_.end() || found->second < sameLineAccessesPerCycle_;
+        if (found == addrsThisCycle_.end()) return true;
+        // More accesses to the line in this cycle (same_line_accesses_per_cycle): reads only, after reads only, and
+        // only while no transaction of the line is in the MSHR, so they are hits of a stable line.
+        const bool only_reads = (found->second & NON_READ_ACCESS) == 0;
+        return only_reads && event->getCmd() == Command::GetS && (found->second & ~NON_READ_ACCESS) < sameLineAccessesPerCycle_
+            && !mshr_->exists(addr);
     }
 
     Addr bank = coherenceMgr_->getBank(addr);
@@ -390,8 +395,10 @@ bool Cache::arbitrateAccess(Addr addr) {
 }
 
 /* Block banks that have been accessed */
-void Cache::updateAccessStatus(Addr addr) {
-    addrsThisCycle_[addr]++;
+void Cache::updateAccessStatus(Addr addr, MemEvent* event) {
+    uint32_t& status = addrsThisCycle_[addr];
+    status++;
+    if (event == nullptr || event->getCmd() != Command::GetS) status |= NON_READ_ACCESS;
     if (banked_) {
         Addr bank = coherenceMgr_->getBank(addr);
         bankStatus_[bank] = true;

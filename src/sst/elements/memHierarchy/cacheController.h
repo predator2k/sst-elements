@@ -263,8 +263,8 @@ private:
     void checkTimeout();
 
     // Arbitrate for bank and/or line access
-    bool arbitrateAccess(Addr addr);
-    void updateAccessStatus(Addr addr);
+    bool arbitrateAccess(Addr addr, MemEvent* event);
+    void updateAccessStatus(Addr addr, MemEvent* event);
 
     // Process coherence initialization events
     void processInitCoherenceEvent(MemEventInitCoherence* event, bool src);
@@ -304,8 +304,10 @@ private:
     uint64_t                    timestamp_;
     int                         requestsThisCycle_;
     std::vector<bool>           bankStatus_;
+    // Accesses to each line in this cycle; NON_READ_ACCESS marks a line that had an access other than a read.
     std::map<Addr, uint32_t>    addrsThisCycle_;
     uint32_t                    sameLineAccessesPerCycle_ = 1;
+    static constexpr uint32_t   NON_READ_ACCESS = 0x80000000u;
     std::list<MemEventBase*>    retryBuffer_;
     std::list<MemEventBase*>    eventBuffer_;
     std::queue<MemEventBase*>   prefetchBuffer_;
