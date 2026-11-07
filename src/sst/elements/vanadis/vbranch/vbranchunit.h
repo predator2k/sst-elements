@@ -49,6 +49,15 @@ public:
 
     // Every instruction in flight was squashed: the speculative state returns to the retired state.
     virtual void flush() {}
+
+    // The instructions younger than a resolved branch were squashed. The oldest conditional_kept conditional and
+    // other_kept other predictions in flight stay; the last of them is the resolved branch (a conditional one when
+    // resolved_conditional), whose next address is next. The default returns to the retired state, as flush() does.
+    virtual void flushYounger(const size_t conditional_kept, const size_t other_kept, const bool resolved_conditional,
+        const uint64_t next)
+    {
+        flush();
+    }
 };
 
 } // namespace Vanadis

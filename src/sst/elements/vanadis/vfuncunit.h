@@ -141,6 +141,19 @@ public:
         }
     }
 
+    // Removes the micro-ops of a thread younger than a resolved branch (program sequence above sequence).
+    void clearYounger(const uint16_t hw_thr, const uint64_t sequence) {
+        for (auto q_itr = pending_execute.begin(); q_itr != pending_execute.end();) {
+            if ((*q_itr)->getHardwareThread() == hw_thr && (*q_itr)->getInstruction()->getProgramSequence() > sequence) {
+                delete (*q_itr);
+                q_itr = pending_execute.erase(q_itr);
+            } else {
+                q_itr++;
+            }
+        }
+        if ( pending_execute.empty() ) busy_cycles = 0;
+    }
+
     void print(SST::Output* output) {
         uint16_t index = 0;
 

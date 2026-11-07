@@ -75,6 +75,16 @@ public:
         return pop_me;
     }
 
+    // Removes the n youngest entries.
+    void popBack(const size_t n)
+    {
+        assert(n <= static_cast<size_t>(count));
+        for ( size_t k = 0; k < n; ++k ) {
+            tail = tail == 0 ? static_cast<int>(max_capacity) - 1 : tail - 1;
+            count--;
+        }
+    }
+
     size_t size() const { return count; }
     size_t capacity() const { return max_capacity; }
 

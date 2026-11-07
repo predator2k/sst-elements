@@ -114,6 +114,8 @@ public:
     // The store at the front of the reorder buffer goes to memory now, if the stores per cycle allow it.
     virtual void commitFrontStore(const uint32_t thread) {}
     virtual void clearLSQByThreadID(const uint32_t thread) = 0;
+    // Removes the operations of a thread younger than a resolved branch: memory sequence above sequence.
+    virtual void clearLSQYounger(const uint32_t thread, const uint64_t sequence) { clearLSQByThreadID(thread); }
 
     virtual void init(unsigned int phase) = 0;
 

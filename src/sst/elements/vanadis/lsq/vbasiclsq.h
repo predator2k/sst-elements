@@ -219,6 +219,41 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             }
         }
 
+        void clearLSQYounger(const uint32_t thread, const uint64_t sequence) override
+        {
+            auto younger = [sequence](const VanadisInstruction* ins) { return ins->getMemorySequence() > sequence; };
+            for(auto op_q_itr = op_q_[thread].begin(); op_q_itr != op_q_[thread].end(); ) {
+                if( younger((*op_q_itr)->getInstruction()) ) {
+                    delete (*op_q_itr);
+                    op_q_itr = op_q_[thread].erase(op_q_itr);
+                    op_q_size_--;
+                } else {
+                    ++op_q_itr;
+                }
+            }
+            for(auto load_itr = loads_pending_.begin(); load_itr != loads_pending_.end(); ) {
+                if( (*load_itr)->getHWThread() == thread && younger((*load_itr)->getLoadInstruction()) ) {
+                    delete (*load_itr);
+                    load_itr = loads_pending_.erase(load_itr);
+                } else {
+                    ++load_itr;
+                }
+            }
+            for(auto parked_itr = parked_loads_.begin(); parked_itr != parked_loads_.end(); ) {
+                parked_itr = ((*parked_itr)->getHWThread() == thread && younger(*parked_itr)) ? parked_loads_.erase(parked_itr) : std::next(parked_itr);
+            }
+            // A forwarded or delayed response of a removed load finds no load entry and is dropped when it is handled.
+            for(auto store_itr = stores_pending_[thread].begin(); store_itr != stores_pending_[thread].end(); ) {
+                if( younger((*store_itr)->getStoreInstruction()) && ! (*store_itr)->isDispatched() ) {
+                    delete (*store_itr);
+                    store_itr = stores_pending_[thread].erase(store_itr);
+                    stores_pending_size_--;
+                } else {
+                    ++store_itr;
+                }
+            }
+        }
+
         // must be implemented to allow the memory system to initialize itself during
         // boot-up
         void init(unsigned int phase) override
@@ -428,6 +463,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
 
                     if(nullptr == load_entry) {
                         // not found, so previous cleared by a branch mis-predict ignore
+                        lsq_->delayed_ids_.erase(ev->getID());
+                        delete ev;
                         return;
                     }
 

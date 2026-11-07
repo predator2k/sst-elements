@@ -120,6 +120,13 @@ public:
 
     uint16_t getFPPhysReg(const uint16_t fp_reg) { assert(fp_reg < count_fp_reg); return fp_reg_ptr[fp_reg]; }
 
+    // Copies the register mappings of another table and keeps the pending counts.
+    void copyMappings(VanadisISATable* tbl)
+    {
+        for ( uint16_t i = 0; i < count_int_reg; ++i ) int_reg_ptr[i] = tbl->int_reg_ptr[i];
+        for ( uint16_t i = 0; i < count_fp_reg; ++i ) fp_reg_ptr[i] = tbl->fp_reg_ptr[i];
+    }
+
     void reset(VanadisISATable* tbl)
     {
         for ( uint16_t i = 0; i < count_int_reg; ++i ) {

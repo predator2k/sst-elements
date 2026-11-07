@@ -126,6 +126,7 @@ public:
         { "misprediction_extra_cycles", "Cycles decode waits after a branch misprediction, above the time the flush takes", "0"},
         { "renames_per_cycle", "With rename_at_dispatch, micro-ops renamed per cycle", "decodes_per_cycle"},
         { "dividers_block", "A divider takes no new instruction until the current one has executed", "false"},
+        { "recover_at_execute", "With rename_at_dispatch, a mispredicted branch squashes the younger instructions when it executes, and the older ones go on; false squashes at retire", "false"},
         { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },
         { "physical_fp_registers", "Number of physical floating point registers per hardware thread", "128" },
@@ -254,6 +255,10 @@ private:
     bool accumulatorBypassed(const VanadisInstruction* ins, const VanadisInstruction* producer) const;
     // A vector producer and consumer in different forwarding regions take one more cycle.
     bool forwardingPenalty(const VanadisInstruction* producer, const VanadisInstruction* consumer) const;
+    // recover_at_execute: squashes the instructions younger than the oldest mispredicted branch that has executed.
+    void recoverMispredictions(const uint64_t cycle, const uint32_t thr);
+    void squashYounger(const uint64_t cycle, const uint32_t thr, VanadisSpeculatedInstruction* branch);
+    void clearFuncUnitYounger(const uint32_t hw_thr, const uint64_t sequence, std::vector<VanadisFunctionalUnit*>& unit);
     // Reorders a unit's pipes by the order a parameter gives.
     void orderPipes(SST::Params& params, const char* key, std::vector<VanadisFunctionalUnit*>& units);
     // rename_at_dispatch: the instruction no longer produces its output registers (it retired or was squashed).
@@ -345,6 +350,11 @@ private:
     uint32_t renames_per_cycle = 0;
     uint64_t misprediction_extra_cycles = 0;
     std::vector<uint64_t> decode_resume_cycle;
+    // recover_at_execute: the branches of each thread that have issued and are not resolved yet, and the next program
+    // sequence number.
+    bool recover_at_execute = false;
+    std::vector<std::vector<VanadisInstruction*>> unresolved_branches;
+    std::vector<uint64_t> next_program_sequence;
 
     VanadisRegisterStack* int_register_stack = nullptr;
     VanadisRegisterStack* fp_register_stack = nullptr;

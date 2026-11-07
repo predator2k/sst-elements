@@ -113,6 +113,9 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     fp_phys_reg_producer.assign(fp_reg_count, nullptr);
     renamed_in_rob.assign(hw_threads, 0);
     misprediction_extra_cycles = params.find<uint64_t>("misprediction_extra_cycles", 0);
+    recover_at_execute = params.find<bool>("recover_at_execute", false);
+    unresolved_branches.resize(hw_threads);
+    next_program_sequence.assign(hw_threads, 1);
     decode_resume_cycle.assign(hw_threads, 0);
     next_memory_sequence.assign(hw_threads, 1);
     violating_load_address.assign(hw_threads, 0);
@@ -575,6 +578,7 @@ VanadisCore::performRename(const uint32_t hw_thr)
         assignRegistersToInstruction(
             thread_decoders[hw_thr]->countISAIntReg(), thread_decoders[hw_thr]->countISAFPReg(), ins, int_register_stack,
             fp_register_stack, issue_isa_tables[hw_thr]);
+        ins->setProgramSequence(next_program_sequence[hw_thr]++);
         renamed_in_rob[hw_thr]++;
     }
 }
@@ -713,6 +717,7 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
             ins->setExecutedCycle(cycle);
         }
         if ( can_issue && ( at_issue || 0 == allocateFunctionalUnit(ins) ) ) {
+            if ( recover_at_execute && INST_BRANCH == ins_type ) unresolved_branches[hwThr].push_back(ins);
             ins->markIssued();
             ins->setIssueCycle(cycle);
             ins->setAccumulatorReadyCycle(cycle + ins->getAccumulatorCycles());
@@ -1745,6 +1750,9 @@ VanadisCore::tick(SST::Cycle_t cycle)
     }
     #endif
     performExecute(cycle);
+    if ( rename_at_dispatch && recover_at_execute ) {
+        for ( uint32_t thr = 0; thr < hw_threads; ++thr ) recoverMispredictions(cycle, thr);
+    }
 
     // Issue
     // //////////////////////////////////////////////////////////////////////////
@@ -2387,6 +2395,112 @@ VanadisCore::handleIncomingInstCacheEvent(StandardMem::Request* ev)
 }
 
 void
+VanadisCore::recoverMispredictions(const uint64_t cycle, const uint32_t thr)
+{
+    if ( halted_masks[thr] ) return;
+    std::vector<VanadisInstruction*>& pending = unresolved_branches[thr];
+    VanadisSpeculatedInstruction* oldest = nullptr;
+    for ( auto it = pending.begin(); it != pending.end(); ) {
+        VanadisInstruction* ins = *it;
+        if ( ! ins->completedExecution() ) {
+            ++it;
+            continue;
+        }
+        VanadisSpeculatedInstruction* branch = dynamic_cast<VanadisSpeculatedInstruction*>(ins);
+        if ( nullptr != branch && branch->getTakenAddress() != branch->getSpeculatedAddress()
+             && ( nullptr == oldest || branch->getProgramSequence() < oldest->getProgramSequence() ) ) {
+            oldest = branch;
+        }
+        it = pending.erase(it);
+    }
+    if ( nullptr != oldest ) squashYounger(cycle, thr, oldest);
+}
+
+void
+VanadisCore::squashYounger(const uint64_t cycle, const uint32_t thr, VanadisSpeculatedInstruction* branch)
+{
+    VanadisCircularQueue<VanadisInstruction*>* thr_rob = rob[thr];
+    const uint64_t sequence = branch->getProgramSequence();
+    size_t position = thr_rob->size();
+    size_t conditional_kept = 0, other_kept = 0;
+    for ( size_t i = 0; i < thr_rob->size(); ++i ) {
+        VanadisInstruction* ins = thr_rob->peekAt(i);
+        if ( INST_BRANCH == ins->getInstFuncType() ) {
+            const VanadisSpeculatedInstruction* b = dynamic_cast<const VanadisSpeculatedInstruction*>(ins);
+            if ( nullptr != b && VanadisBranchClass::CONDITIONAL == b->getBranchClass() ) conditional_kept++;
+            else other_kept++;
+        }
+        if ( ins == branch ) {
+            position = i;
+            break;
+        }
+    }
+    if ( position == thr_rob->size() ) {
+        output->fatal(CALL_INFO, -1, "A resolved branch at 0x%" PRI_ADDR " is not in the reorder buffer.\n", branch->getInstructionAddress());
+    }
+
+    // The younger instructions give back their registers and their places in the rename table's counts.
+    VanadisISATable* issue_table = issue_isa_tables[thr];
+    uint64_t first_memory = UINT64_MAX;
+    std::vector<VanadisInstruction*> squashed;
+    for ( size_t i = thr_rob->size(); i-- > position + 1; ) {
+        VanadisInstruction* ins = thr_rob->peekAt(i);
+        const auto type = ins->getInstFuncType();
+        if ( ( INST_LOAD == type || INST_STORE == type || INST_FENCE == type ) && ins->getMemorySequence() != 0 ) {
+            first_memory = std::min(first_memory, ins->getMemorySequence());
+        }
+        if ( ins->registersAssigned() ) {
+            for ( uint16_t k = 0; k < ins->countISAIntRegIn(); ++k ) issue_table->decIntRead(ins->getISAIntRegIn(k));
+            for ( uint16_t k = 0; k < ins->countISAFPRegIn(); ++k ) issue_table->decFPRead(ins->getISAFPRegIn(k));
+            for ( uint16_t k = 0; k < ins->countISAIntRegOut(); ++k ) issue_table->decIntWrite(ins->getISAIntRegOut(k));
+            for ( uint16_t k = 0; k < ins->countISAFPRegOut(); ++k ) issue_table->decFPWrite(ins->getISAFPRegOut(k));
+            if ( INST_SYSCALL != type ) ins->returnOutRegs(int_register_stack, fp_register_stack);
+            clearRegisterProducers(ins);
+        }
+        squashed.push_back(ins);
+    }
+    stat_rob_cleared_entries->addData(squashed.size());
+
+    clearFuncUnitYounger(thr, sequence, fu_int_arith);
+    clearFuncUnitYounger(thr, sequence, fu_int_div);
+    clearFuncUnitYounger(thr, sequence, fu_fp_arith);
+    clearFuncUnitYounger(thr, sequence, fu_fp_div);
+    clearFuncUnitYounger(thr, sequence, fu_branch);
+    if ( first_memory != UINT64_MAX ) {
+        lsq->clearLSQYounger(thr, first_memory - 1);
+        if ( has_order_violation[thr] && violating_load_sequence[thr] >= first_memory ) has_order_violation[thr] = 0;
+    }
+    thr_rob->popBack(squashed.size());
+    for ( VanadisInstruction* ins : squashed ) delete ins;
+    renamed_in_rob[thr] = thr_rob->size();
+
+    // The rename table maps what the retired state and the instructions that stay map.
+    issue_table->copyMappings(retire_isa_tables[thr]);
+    for ( size_t i = 0; i < thr_rob->size(); ++i ) {
+        VanadisInstruction* ins = thr_rob->peekAt(i);
+        if ( ! ins->registersAssigned() ) continue;
+        for ( uint16_t k = 0; k < ins->countISAIntRegOut(); ++k ) issue_table->setIntPhysReg(ins->getISAIntRegOut(k), ins->getPhysIntRegOut(k));
+        for ( uint16_t k = 0; k < ins->countISAFPRegOut(); ++k ) issue_table->setFPPhysReg(ins->getISAFPRegOut(k), ins->getPhysFPRegOut(k));
+    }
+
+    const uint64_t next = branch->getTakenAddress();
+    thread_decoders[thr]->getBranchPredictor()->flushYounger(conditional_kept, other_kept,
+        VanadisBranchClass::CONDITIONAL == branch->getBranchClass(), next);
+    thread_decoders[thr]->setInstructionPointerAfterMisspeculate(next);
+    branch->setSpeculatedAddress(next);
+    decode_resume_cycle[thr] = cycle + misprediction_extra_cycles;
+    stat_branch_mispredicts->addData(1);
+}
+
+void
+VanadisCore::clearFuncUnitYounger(const uint32_t hw_thr, const uint64_t sequence, std::vector<VanadisFunctionalUnit*>& unit)
+{
+    for ( VanadisFunctionalUnit* next_fu : unit ) {
+        next_fu->clearYounger(hw_thr, sequence);
+    }
+}
+
+void
 VanadisCore::handleMisspeculate(const uint32_t hw_thr, const uint64_t new_ip)
 {
     #ifdef VANADIS_BUILD_DEBUG
@@ -2404,6 +2518,7 @@ VanadisCore::handleMisspeculate(const uint32_t hw_thr, const uint64_t new_ip)
     lsq->clearLSQByThreadID(hw_thr);
     //resetRegisterStacks(hw_thr);
     clearROBMisspeculate(hw_thr);
+    unresolved_branches[hw_thr].clear();
 
     // Reset the ISA table to get correct ISA to physical mappings
     issue_isa_tables[hw_thr]->reset(retire_isa_tables[hw_thr]);

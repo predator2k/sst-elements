@@ -147,6 +147,32 @@ public:
         returns_ = retired_returns_;
     }
 
+    // The speculative history and return stack are rebuilt from the retired ones and the predictions that stay; the
+    // resolved branch adds its outcome instead of its prediction.
+    void flushYounger(const size_t conditional_kept, const size_t other_kept, const bool resolved_conditional,
+        const uint64_t next) override
+    {
+        while ( in_flight_.size() > conditional_kept ) in_flight_.pop_back();
+        while ( in_flight_unconditional_.size() > other_kept ) in_flight_unconditional_.pop_back();
+        history_ = retired_history_;
+        for ( size_t k = 0; k < in_flight_.size(); ++k ) {
+            const bool last = k + 1 == in_flight_.size();
+            const bool taken = last && resolved_conditional ? next != in_flight_[k].fall_through : in_flight_[k].prediction;
+            shiftIn(history_, taken);
+        }
+        returns_ = retired_returns_;
+        for ( const InFlightOther& other : in_flight_unconditional_ ) {
+            if ( VanadisBranchClass::CALL == other.branch_class ) {
+                returns_.push_back(other.fall_through);
+                if ( returns_.size() > return_stack_entries_ ) returns_.pop_front();
+            }
+            else if ( VanadisBranchClass::RETURN == other.branch_class && ! returns_.empty() ) {
+                returns_.pop_back();
+            }
+        }
+    }
+
+
 private:
     //! Bits of global history kept, the largest allowed history length.
     static constexpr uint32_t HISTORY_BITS = 256;

@@ -91,6 +91,7 @@ class VanadisInstruction
             dynamic_cycles_       = 0;
             issue_cycle_          = 0;
             executed_cycle_       = 0;
+            program_sequence_     = 0;
             end_uop_group_        = false;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -137,6 +138,7 @@ class VanadisInstruction
             dynamic_cycles_       = copy_me.dynamic_cycles_;
             issue_cycle_          = copy_me.issue_cycle_;
             executed_cycle_       = copy_me.executed_cycle_;
+            program_sequence_     = copy_me.program_sequence_;
             end_uop_group_        = copy_me.end_uop_group_;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -481,6 +483,9 @@ class VanadisInstruction
         uint64_t getIssueCycle() const { return issue_cycle_; }
         void setExecutedCycle(const uint64_t cycle) { executed_cycle_ = cycle; }
         uint64_t getExecutedCycle() const { return executed_cycle_; }
+        // With rename_at_dispatch the program order of every micro-op, from 1: a flush at a branch removes the larger ones.
+        void setProgramSequence(const uint64_t sequence) { program_sequence_ = sequence; }
+        uint64_t getProgramSequence() const { return program_sequence_; }
 
         // With rename_at_dispatch a store issues when its address is known; these inputs are read when it goes to memory.
         virtual bool isStoreDataIntRegIn(const uint16_t index) const { return false; }
@@ -550,6 +555,7 @@ class VanadisInstruction
         uint16_t dynamic_cycles_;
         uint64_t issue_cycle_;
         uint64_t executed_cycle_;
+        uint64_t program_sequence_;
         bool end_uop_group_;
         bool is_front_of_rob_;
         bool has_rob_slot_;
