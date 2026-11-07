@@ -36,7 +36,8 @@ public:
         { "bimodal_entries", "Entries of the bimodal table, a power of two", "16384" },
         { "tagged_entries", "Entries of each tagged table, a power of two", "4096" },
         { "history_lengths", "Global history length of each tagged table, shortest first, up to 2048 branches and 16 tables", "[4, 8, 16, 32, 64, 128, 256]" },
-        { "return_stack_entries", "Entries of the return address stack", "32" })
+        { "return_stack_entries", "Entries of the return address stack", "32" },
+        { "allocations_per_misprediction", "Tagged tables longer than the provider in which a wrong prediction takes a free entry, shortest first", "1" })
 
     SST_ELI_DOCUMENT_STATISTICS(
         { "direction_predictions", "Conditional branches predicted", "branches", 1 },
@@ -48,6 +49,7 @@ public:
         const uint32_t bimodal = params.find<uint32_t>("bimodal_entries", 16384);
         const uint32_t tagged = params.find<uint32_t>("tagged_entries", 4096);
         return_stack_entries_ = params.find<uint32_t>("return_stack_entries", 32);
+        allocations_ = std::max<uint32_t>(1, params.find<uint32_t>("allocations_per_misprediction", 1));
         std::vector<uint32_t> lengths;
         params.find_array<uint32_t>("history_lengths", lengths);
         if ( lengths.empty() ) lengths = { 4, 8, 16, 32, 64, 128, 256 };
@@ -352,20 +354,20 @@ private:
         }
     }
 
-    //! A wrong prediction takes an entry in the shortest table longer than the provider that has a free one.
+    //! A wrong prediction takes an entry in each of the allocations_ shortest tables longer than the provider that have a
+    //! free one.
     void allocate(const InFlight& branch, const bool taken)
     {
-        bool allocated = false;
-        for ( size_t t = static_cast<size_t>(branch.provider + 1); t < tables_.size(); ++t ) {
+        uint32_t allocated = 0;
+        for ( size_t t = static_cast<size_t>(branch.provider + 1); t < tables_.size() && allocated < allocations_; ++t ) {
             TaggedEntry& entry = tables_[t].entries[branch.index[t]];
             if ( entry.useful == 0 ) {
                 entry.tag = branch.tag[t];
                 entry.counter = taken ? 0 : -1;
-                allocated = true;
-                break;
+                allocated++;
             }
         }
-        if ( allocated ) return;
+        if ( allocated > 0 ) return;
         for ( size_t t = static_cast<size_t>(branch.provider + 1); t < tables_.size(); ++t ) {
             TaggedEntry& entry = tables_[t].entries[branch.index[t]];
             if ( entry.useful > 0 ) --entry.useful;
@@ -419,6 +421,8 @@ private:
 
     Statistic<uint64_t>* stat_predictions_ = nullptr;
     Statistic<uint64_t>* stat_mispredictions_ = nullptr;
+    //! allocations_per_misprediction.
+    uint32_t allocations_ = 1;
 };
 
 } // namespace Vanadis
