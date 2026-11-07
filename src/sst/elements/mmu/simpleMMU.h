@@ -39,6 +39,12 @@ class SimpleMMU : public MMU {
 
     SST_ELI_DOCUMENT_PARAMS(
         {"debug_level", "Debug verbosity level (0-10) where 0 is no output. Output is only available if sst-core was compiled with `--enable-debug`.", "0"},
+        // The parameters of the MMU base class (mmu.h), listed here too so that a configuration tool that reads only
+        // this element's ELI knows them; the defaults are those of the base class.
+        { "num_cores", "Number of cores managed by this MMU", "1" },
+        { "num_threads", "Number of hardware threads per core", "1" },
+        { "page_size", "Memory page size in bytes", "4096" },
+        { "use_nic_tlb" , "Whether to use the NIC TLB", "false" },
     )
 
     SimpleMMU(SST::ComponentId_t id, SST::Params& params);

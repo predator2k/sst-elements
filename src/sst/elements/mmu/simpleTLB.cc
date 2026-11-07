@@ -201,7 +201,7 @@ void SimpleTLB::getVirtToPhys( RequestID req_id, uint32_t hw_thread_id, uint64_t
     if ( nullptr != entry && checkPerms( perms, entry->perms() ) && waiting.find( vpn ) == waiting.end()) {
 
         dbg_.debug(CALL_INFO,1,0,"hit ppn=%" PRIu32 "\n", entry->ppn() );
-        uint64_t phys_addr = entry->ppn() << page_shift_ | blockOffset( virt_addr );
+        uint64_t phys_addr = ((uint64_t) entry->ppn() << page_shift_) | blockOffset( virt_addr );
         uint32_t latency = hit_latency_;
         if ( first_level_entries_ > 0 && ! touchFirstLevel( hw_thread_id, vpn ) ) latency += first_level_miss_cycles_;
         self_link_->send( latency, new SelfEvent( req_id, phys_addr ));
