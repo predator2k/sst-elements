@@ -40,8 +40,11 @@ class Page {
         PageDbg("ppn=%" PRIu32 "\n",ppn_);
     }
 
+    // Tag of the constructor of a page for a given virtual page.
+    struct ForVirtualPage {};
+
     // A page that backs virtual page vpn; the page order of mem may give it the colour of vpn.
-    Page( PhysMemManager* mem, uint32_t vpn, bool ) : mem_(mem), ref_cnt_(1) {
+    Page( PhysMemManager* mem, ForVirtualPage, uint32_t vpn ) : mem_(mem), ref_cnt_(1) {
         ppn_ = mem_->allocPage( PhysMemManager::PageSize::FourKB, vpn );
         PageDbg("ppn=%" PRIu32 "\n",ppn_);
     }

@@ -116,7 +116,7 @@ class PhysMemManager {
 
     void allocPages( PageSize pageSize, int numPages, PageList& pagesOut ) {
         while ( numPages ) {
-            pagesOut.push_back( findFreePage( pageSize ) );
+            pagesOut.push_back( findFreePage( pageSize, UINT32_MAX ) );
             --numPages;
         }
     }

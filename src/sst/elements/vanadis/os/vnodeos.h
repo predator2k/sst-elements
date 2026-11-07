@@ -430,7 +430,7 @@ private:
 
     // A page that backs virtual page vpn.
     OS::Page* allocPage( uint32_t vpn ) {
-        auto page = new OS::Page(phys_mem_mgr_, vpn, true);
+        auto page = new OS::Page(phys_mem_mgr_, OS::Page::ForVirtualPage{}, vpn);
         #ifdef VANADIS_BUILD_DEBUG
         output_->verbose(CALL_INFO, 1, VANADIS_OS_DBG_PAGE_FAULT,"ppn=%" PRIu32 "\n",page->getPPN());
         #endif

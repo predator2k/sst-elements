@@ -602,6 +602,10 @@ VanadisCore::performRename(const uint32_t hw_thr)
             thread_decoders[hw_thr]->countISAIntReg(), thread_decoders[hw_thr]->countISAFPReg(), ins, int_register_stack,
             fp_register_stack, issue_isa_tables[hw_thr]);
         ins->setProgramSequence(next_program_sequence[hw_thr]++);
+        if ( nullptr != ins->getTiming() && ins->getTiming()->accumulator_alternate ) {
+            ins->setPrevAlternateSequence(last_alternate_sequence_);
+            last_alternate_sequence_ = ins->getProgramSequence();
+        }
         renamed_in_rob[hw_thr]++;
     }
 }
@@ -618,9 +622,10 @@ VanadisCore::accumulatorBypassed(const VanadisInstruction* ins, const VanadisIns
     const VanadisTimingRecord* p = producer->getTiming();
     const VanadisTimingRecord* c = ins->getTiming();
     if ( nullptr == p || nullptr == c ) return true;
-    // accumulator_alternate: the shorter latency only from the last such micro-op that issued, when it did not take it.
+    // accumulator_alternate: the shorter latency only from the such micro-op just before in program order, when it did not
+    // take it itself.
     if ( p->accumulator_alternate ) {
-        const bool fast = 0 != last_alternate_sequence_ && producer->getProgramSequence() == last_alternate_sequence_
+        const bool fast = 0 != ins->getPrevAlternateSequence() && producer->getProgramSequence() == ins->getPrevAlternateSequence()
             && ! producer->tookFastAccumulate();
         if ( ! fast && issue_stage_cycle < producer->getAccumulatorReadyCycle() + 1 ) return false;
         fast_accumulate_pending_ = fast;
@@ -754,10 +759,7 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
             ins->markIssued();
             ins->setIssueCycle(cycle);
             ins->setAccumulatorReadyCycle(cycle + ins->getAccumulatorCycles());
-            if ( nullptr != timing && timing->accumulator_alternate ) {
-                ins->setFastAccumulate(fast_accumulate_pending_);
-                last_alternate_sequence_ = ins->getProgramSequence();
-            }
+            if ( nullptr != timing && timing->accumulator_alternate ) ins->setFastAccumulate(fast_accumulate_pending_);
             ins_issued_this_cycle++;
             rob_start = j;
             return 0;
