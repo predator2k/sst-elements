@@ -152,8 +152,9 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         bool storeBufferFull() override { return std_stores_in_flight_.size() >= max_stores_; }
 
         /*
-         * Whether a store that the core issues ahead of older loads will find a store-buffer entry when it reaches the front
-         * of the queue: the stores already pending and those still in the queue leave one free.
+         * Whether a store that the core issues ahead of an older memory operation will find a store-buffer entry when it
+         * reaches the front of the queue, and leave one more free: the oldest store, which retires first, must always find an
+         * entry, or the stores that passed it would hold every entry until it retired.
          * Handling: counts the stores of the thread's queue. Emits nothing.
          */
         bool storeBufferHasRoom(const uint32_t thread) override
@@ -162,7 +163,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             for (const VanadisBasicLoadStoreEntry* e : op_q_[thread]) {
                 if (const_cast<VanadisBasicLoadStoreEntry*>(e)->getEntryOp() == VanadisBasicLoadStoreEntryOp::STORE) queued++;
             }
-            return stores_pending_size_ + queued < max_stores_;
+            return stores_pending_size_ + queued + 1 < max_stores_;
         }
 
         size_t storeSize() override { return op_q_size_; }
