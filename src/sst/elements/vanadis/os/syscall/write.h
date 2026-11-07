@@ -31,8 +31,17 @@ public:
         m_output->verbose(CALL_INFO, 16, 0, "[syscall-write] -> call is write( %" PRId64 ", 0x%0" PRI_ADDR ", %" PRId64 " )\n",
                             event->getFileDescriptor(), event->getBufferAddress(), event->getBufferCount());
         #endif
+        m_emulated = process->getEmulatedFile( event->getFileDescriptor() );
         m_fd = process->getFileDescriptor( event->getFileDescriptor());
-        if ( -1 == m_fd ) {
+        if ( m_emulated ) {
+            // An emulated file (pipe, thread name): the whole buffer is read first, then written in one go.
+            if ( event->getBufferCount() == 0 ) {
+                setReturnSuccess(0);
+            } else {
+                m_data.resize( event->getBufferCount() );
+                readMemory( event->getBufferAddress(), m_data );
+            }
+        } else if ( -1 == m_fd ) {
             m_output->verbose(CALL_INFO, 16, 0,
                             "[syscall-write] -> file handle %" PRId64
                             " is not currently open, return an error code.\n",
@@ -52,7 +61,37 @@ public:
         }
     }
 
+    // Writes what is left of the buffer into the emulated file; true when the call finished.
+    bool writeEmulated( uint64_t now_ns ) {
+        int64_t ret = m_emulated->write( m_data.data() + m_numWritten, m_data.size() - m_numWritten, now_ns );
+        if ( ret >= 0 ) {
+            m_numWritten += ret;
+        }
+        if ( m_numWritten == m_data.size() || ( ret < 0 && -EAGAIN != ret ) || ( m_emulated->nonblock() && m_numWritten ) ) {
+            if ( ret < 0 && 0 == m_numWritten ) {
+                setReturnFail( ret );
+            } else {
+                setReturnSuccess( m_numWritten );
+            }
+            return true;
+        }
+        if ( m_emulated->nonblock() ) {
+            setReturnFail( -EAGAIN );
+            return true;
+        }
+        return false;
+    }
+
+    bool retry( uint64_t now_ns ) override { return writeEmulated( now_ns ); }
+
     void memReqIsDone(bool) {
+
+        if ( m_emulated ) {
+            if ( ! writeEmulated( m_os->nodeTimeNs() ) ) {
+                m_os->blockSyscall( this );
+            }
+            return;
+        }
 
         int retval = write( m_fd, m_data.data(), m_data.size() );
         assert( retval >= 0 );
@@ -73,6 +112,7 @@ public:
     std::vector<uint8_t>    m_data;
     int                     m_fd;
     size_t                  m_numWritten;
+    std::shared_ptr<OS::EmulatedFile> m_emulated;
 };
 
 } // namespace Vanadis

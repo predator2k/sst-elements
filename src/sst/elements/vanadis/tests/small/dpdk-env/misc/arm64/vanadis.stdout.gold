@@ -1,0 +1,16 @@
+geteuid equals getuid                        ok
+getegid equals getgid                        ok
+faccessat of the work directory              ok
+faccessat of a missing file is ENOENT        ok
+access (glibc faccessat) of the work directory ok
+mkdirat of a new directory                   ok
+mkdirat of it again is EEXIST                ok
+faccessat finds it                           ok
+stat of the work directory is a directory    ok
+stat of a missing file is ENOENT             ok
+write 512 bytes to a new file                ok
+fstat gives a regular file of that size      ok
+fstat of a pipe is a FIFO                    ok
+getrlimit RLIMIT_NOFILE                      ok
+setrlimit RLIMIT_NOFILE to the same value    ok
+done

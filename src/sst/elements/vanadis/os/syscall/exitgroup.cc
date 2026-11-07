@@ -48,6 +48,8 @@ VanadisExitGroupSyscall::VanadisExitGroupSyscall( VanadisNodeOSComponent* os, SS
         unsigned core = tmp->getCore();
         unsigned hwThread = tmp->getHwThread();
 
+        // a call the thread is blocked in (pipe read, epoll_pwait, sleep) ends with it
+        os->discardBlockedSyscall( core, hwThread );
         // tell the hwthread to halt execution
         coreLink->send( new VanadisExitResponse( -1, hwThread ) );
 

@@ -128,6 +128,11 @@ public:
 
         if ( function_map_.find( os_code ) != function_map_.end() ) {
             call_ev = function_map_[os_code]( hw_thr ); // TODO_Anu: will the functionmap have entries for the sub threads != super thread?
+        } else if ( UNKNOWN_FATAL == unknown_syscall_ ) {
+            output_->fatal(CALL_INFO, -1, "Error: unknown code %" PRIu64 " (ins: %#" PRIx64 ", link-reg: %#" PRIx64 ")\n",
+                os_code, syscallIns->getInstructionAddress(), call_link_value);
+        } else if ( UNKNOWN_ENOSYS == unknown_syscall_ ) {
+            recvSyscallResp( new VanadisSyscallResponse( -ENOSYS ) );
         #ifdef VANADIS_BUILD_DEBUG
         } else {
             output_->fatal(CALL_INFO, -1, "Error: unknown code %" PRIu64 " (ins: %#" PRIx64 ", link-reg: %#" PRIx64 ")\n",

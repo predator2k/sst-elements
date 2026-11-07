@@ -23,6 +23,8 @@ namespace SST {
 namespace Vanadis {
 
 #define VANADIS_RLIMIT_STACK        3   /* max stack size */
+#define VANADIS_RLIMIT_NOFILE       7   /* max number of open files */
+#define VANADIS_FD_TABLE_SIZE       1024 /* FileDescriptorTable of ProcessInfo */
 
 typedef uint64_t vanadis_rlim_t;
 struct vanadis_rlimit {
@@ -39,7 +41,9 @@ public:
         m_output->verbose(CALL_INFO, 2, VANADIS_OS_DBG_SYSCALL, "[syscall-prlimit] pid=%" PRIu64 " resource=%" PRIu64 " new_limit=%#" PRIx64 " old_limit=%#" PRIx64 "\n",
             event->getPid(),event->getResource(),event->getNewLimit(),event->getOldLimit());
         #endif
-        assert( event->getResource() == VANADIS_RLIMIT_STACK );
+        // RLIMIT_STACK as upstream; RLIMIT_NOFILE reports the size of the descriptor table (a new limit is accepted
+        // and changes nothing).
+        assert( event->getResource() == VANADIS_RLIMIT_STACK || event->getResource() == VANADIS_RLIMIT_NOFILE );
 
         payload.resize( sizeof( struct vanadis_rlimit ) );
 
@@ -54,7 +58,9 @@ public:
         if ( READ == m_state ) {
             m_state = WRITE;
             auto buf = ( struct vanadis_rlimit * ) payload.data();
-            printf("[syscall-prlimit] newlimit %" PRIu64 " %" PRIu64 "\n",buf->rlim_cur,buf->rlim_max);
+            if ( event_resource() == VANADIS_RLIMIT_STACK ) {
+                printf("[syscall-prlimit] newlimit %" PRIu64 " %" PRIu64 "\n",buf->rlim_cur,buf->rlim_max);
+            }
 
             writeOld();
         } else {
@@ -67,8 +73,13 @@ public:
 
         if ( event->getOldLimit() ) {
             auto buf = ( struct vanadis_rlimit * ) payload.data();
-            buf->rlim_cur = 1024*1014*10;
-            buf->rlim_max = -1;
+            if ( event->getResource() == VANADIS_RLIMIT_NOFILE ) {
+                buf->rlim_cur = VANADIS_FD_TABLE_SIZE;
+                buf->rlim_max = VANADIS_FD_TABLE_SIZE;
+            } else {
+                buf->rlim_cur = 1024*1014*10;
+                buf->rlim_max = -1;
+            }
 
             m_state = WRITE;
             writeMemory( event->getOldLimit(), payload );
@@ -78,6 +89,7 @@ public:
     }
 
  private:
+    uint64_t event_resource() { return getEvent<VanadisSyscallPrlimitEvent*>()->getResource(); }
     enum { READ, WRITE } m_state;
     std::vector<uint8_t> payload;
 };

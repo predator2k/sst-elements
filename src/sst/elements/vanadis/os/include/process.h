@@ -415,6 +415,23 @@ class ProcessInfo {
         return 0;
     }
 
+    // mmap at an address: fixed replaces the pages of the range (MAP_FIXED); otherwise addr is a hint. Returns 0
+    // when no range is free.
+    uint64_t mmapAt( uint64_t addr, size_t length, int prot, Device* dev, bool fixed ) {
+        length = roundUp( length, page_size_ );
+        uint32_t perms = 0;
+        if ( prot & PROT_WRITE ) { perms |= 1<<1;}
+        if ( prot & PROT_READ ) { perms |= 1<<2;}
+        uint64_t ret = virtual_memory_map_->mmapAt( addr, length, perms, dev, fixed );
+        virtual_memory_map_->print( "mmapped" );
+        return ret;
+    }
+
+    // Unmaps the pages of [addr, addr + length) that are mapped; holes are skipped.
+    void unmapRange( uint64_t addr, size_t length ) {
+        virtual_memory_map_->unmapRange( addr, roundUp( length, page_size_ ) );
+    }
+
     int unmap( uint64_t addr, size_t length ) {
         if ( 0 == length ) return EINVAL;
         if ( addr & ( 1 << page_shift_ ) - 1 ) return EINVAL;
@@ -459,6 +476,19 @@ class ProcessInfo {
     std::string getFilePath( uint32_t handle ) {
         return file_table_->getPath( handle );
     }
+
+    // Opens a file the node OS keeps itself (pipe end, epoll, timer, memory, device or configured file).
+    int openEmulatedFile( const std::string& name, std::shared_ptr<EmulatedFile> file, int flags, int fd = -1 ) {
+        return file_table_->openEmulated( name, file, flags, fd );
+    }
+
+    // The emulated file of a descriptor, or null for a host file or a descriptor that is not open.
+    std::shared_ptr<EmulatedFile> getEmulatedFile( uint32_t handle ) {
+        return file_table_->getEmulated( handle );
+    }
+
+    // Whether a descriptor is open.
+    bool isFileOpen( uint32_t handle ) { return file_table_->isOpen( handle ); }
 
     void setAffinity(const std::vector<uint8_t>& mask) { cpu_mask_ = mask; }
     std::vector<uint8_t> getAffinity() const { return cpu_mask_; }

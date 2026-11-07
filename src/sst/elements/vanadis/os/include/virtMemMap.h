@@ -128,7 +128,16 @@ public:
 
     uint64_t mmap( size_t length, uint32_t perms, Device* dev );
 
+    // mmap with an address: fixed (MAP_FIXED) replaces whatever the pages [addr, addr + length) held and returns
+    // addr; otherwise addr is a hint that is used when the whole range is free, and any free range is taken when
+    // it is not. Returns 0 when no range is free.
+    uint64_t mmapAt( uint64_t addr, size_t length, uint32_t perms, Device* dev, bool fixed );
+
     int unmap( uint64_t addr, size_t length );
+
+    // Unmaps every page of [addr, addr + length) that a region holds; pages no region holds are skipped (munmap of a
+    // range with holes, and the replacement of MAP_FIXED).
+    void unmapRange( uint64_t addr, size_t length );
 
     void initBrk( uint64_t addr );
 

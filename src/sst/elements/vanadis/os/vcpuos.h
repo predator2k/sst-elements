@@ -23,7 +23,9 @@
 #include <sys/fcntl.h>
 #include <sys/mman.h>
 
+#include <cerrno>
 #include <functional>
+#include <string>
 #include <tuple>
 
 #include "inst/isatable.h"
@@ -53,6 +55,19 @@ public:
 
         hw_thr_ = 0;
         core_id_ = 0;
+
+        // A system call number the handler does not know: ignore (the call returns at once and the return register
+        // keeps its value, as upstream), enosys (it returns -ENOSYS, as Linux does) or fatal.
+        std::string unknown = params.find<std::string>("unknown_syscall", "ignore");
+        if ( "ignore" == unknown ) {
+            unknown_syscall_ = UNKNOWN_IGNORE;
+        } else if ( "enosys" == unknown ) {
+            unknown_syscall_ = UNKNOWN_ENOSYS;
+        } else if ( "fatal" == unknown ) {
+            unknown_syscall_ = UNKNOWN_FATAL;
+        } else {
+            output_->fatal(CALL_INFO, -1, "Error: unknown_syscall is %s, not ignore, enosys or fatal\n", unknown.c_str());
+        }
     }
 
     virtual ~VanadisCPUOSHandler() { delete output_; }
@@ -89,6 +104,9 @@ protected:
     VanadisISATable* isa_table_;
 
     uint64_t* tls_address_;
+
+    // What a system call number without a handler does (parameter unknown_syscall).
+    enum { UNKNOWN_IGNORE, UNKNOWN_ENOSYS, UNKNOWN_FATAL } unknown_syscall_;
 
 private:
     SST::Link* os_link_;

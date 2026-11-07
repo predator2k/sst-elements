@@ -18,6 +18,8 @@
 
 #include "os/syscall/syscall.h"
 #include "os/callev/voscallopenat.h"
+#include "os/include/emulatedFile.h"
+#include <memory>
 
 namespace SST {
 namespace Vanadis {
@@ -60,7 +62,27 @@ public:
         m_output->verbose(CALL_INFO, 16, 0, "[syscall-openat] path: \"%s\"\n", m_filename.c_str());
         #endif
 
-        int fd = m_process->openFile( m_filename.c_str(), m_dirFd, getEvent<VanadisSyscallOpenatEvent*>()->getFlags(), getEvent<VanadisSyscallOpenatEvent*>()->getMode() );
+        std::string path( m_filename.c_str() );
+        int flags = getEvent<VanadisSyscallOpenatEvent*>()->getFlags();
+
+        // A device file of the parameter device_paths: an emulated file whose mmap maps the device window.
+        OS::Device* dev = m_os->findDeviceByPath( path );
+        if ( dev ) {
+            setReturnSuccess( m_process->openEmulatedFile( path, std::make_shared<OS::DeviceFile>( dev ), flags ) );
+            return;
+        }
+        // The thread-name files of a node with its own /proc (mapped_prefixes holds /proc): pthread_setname_np
+        // writes the name there.
+        if ( m_os->hostPath( "/proc" ) != "/proc" && isThreadNamePath( path ) ) {
+            setReturnSuccess( m_process->openEmulatedFile( path, std::make_shared<OS::ThreadNameFile>( m_os->threadName( path ) ), flags ) );
+            return;
+        }
+        // The node's own /sys and /proc entries (mapped_prefixes); every other path is a host path, as upstream.
+        if ( '/' == path[0] ) {
+            path = m_os->hostPath( path );
+        }
+
+        int fd = m_process->openFile( path.c_str(), m_dirFd, flags, getEvent<VanadisSyscallOpenatEvent*>()->getMode() );
 
         if ( fd < 0 ) {
             // we need to save this because any other library calls could change it
@@ -87,6 +109,21 @@ public:
     }
 
  private:
+    // /proc/self/comm, /proc/thread-self/comm and /proc/self/task/<tid>/comm (also with a pid instead of self).
+    static bool isThreadNamePath( const std::string& path ) {
+        const std::string proc = "/proc/", comm = "/comm";
+        if ( 0 != path.compare( 0, proc.size(), proc ) || path.size() < proc.size() + comm.size()
+            || 0 != path.compare( path.size() - comm.size(), comm.size(), comm ) ) {
+            return false;
+        }
+        std::string mid = path.substr( proc.size(), path.size() - proc.size() - comm.size() );
+        if ( "self" == mid || "thread-self" == mid ) {
+            return true;
+        }
+        size_t slash = mid.find( "/task/" );
+        return std::string::npos != slash;
+    }
+
     int m_dirFd;
     std::string m_filename;
 };

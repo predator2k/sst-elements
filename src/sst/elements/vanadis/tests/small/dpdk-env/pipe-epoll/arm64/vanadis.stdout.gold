@@ -1,0 +1,29 @@
+pipe2                                        ok
+write 5 bytes                                ok
+read 3 of 5                                  ok
+read the other 2                             ok
+pipe2 O_NONBLOCK                             ok
+empty nonblocking read is EAGAIN             ok
+epoll_create1                                ok
+EPOLL_CTL_ADD                                ok
+second ADD is EEXIST                         ok
+MOD of an absent fd is ENOENT                ok
+epoll_pwait timeout 0, nothing ready         ok
+epoll_pwait timeout 5 ms returns 0           ok
+  and waits at least 5 ms                    ok
+ready pipe: one event                        ok
+  EPOLLIN with the data of ADD               ok
+EPOLL_CTL_MOD                                ok
+  MOD changed the data                       ok
+EPOLL_CTL_DEL                                ok
+second DEL is ENOENT                         ok
+timerfd_create                               ok
+ADD the timer file                           ok
+timerfd_settime 2 ms                         ok
+timer becomes ready during the wait          ok
+  after at least 2 ms                        ok
+read of the timer file: 1 expiration         ok
+second read is EAGAIN                        ok
+read after the writer closed is EOF          ok
+write after the reader closed is EPIPE       ok
+done

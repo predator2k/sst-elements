@@ -219,6 +219,11 @@ private:
     virtual ~VanadisSyscall();
 
     virtual void handleEvent( VanadisCoreEvent* ) { assert(0); }
+    // A blocked call (VanadisNodeOSComponent::blockSyscall) tries again at node time now_ns; true when it made
+    // progress (it completed or issued memory requests), so the OS stops holding it.
+    virtual bool retry( uint64_t now_ns ) { return false; }
+    // The node time (ns) at which a blocked call wants to be retried even if no file changed, or 0.
+    virtual uint64_t wakeAtNs( uint64_t now_ns ) { return 0; }
     virtual bool isComplete() { return m_complete && m_pendingMem.empty(); }
     bool handleMemRespBase( StandardMem::Request* req );
     int getCoreId()         { return m_process->getCore(); }

@@ -45,7 +45,17 @@ public:
 
         m_os->getMMU()->unmap( process->getpid(), address >> m_os->getPageShift(), length/m_os->getPageSize() );
 
-        int ret = process->unmap( address, length );
+        int ret = 0;
+        if ( m_os->mmapFixedReplace() ) {
+            // Linux: pages of the range that no mapping holds are skipped.
+            if ( 0 == length || ( address & ( m_os->getPageSize() - 1 ) ) ) {
+                ret = EINVAL;
+            } else {
+                process->unmapRange( address, length );
+            }
+        } else {
+            ret = process->unmap( address, length );
+        }
         if ( ret ) {
             setReturnFail( -ret );
         } else {

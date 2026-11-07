@@ -1,0 +1,17 @@
+nanosleep 3 ms                               ok
+  slept at least 3 ms                        ok
+clock_nanosleep 1 us                         ok
+  slept at least 1 us                        ok
+clock_nanosleep TIMER_ABSTIME +2 ms          ok
+  woke at or after the target                ok
+absolute time in the past returns at once    ok
+timerfd_create (blocking)                    ok
+arm one shot of 4 ms                         ok
+timerfd_gettime of the armed timer           ok
+blocking read: 1 expiration                  ok
+  after at least 4 ms                        ok
+timerfd_gettime after it fired is disarmed   ok
+arm periodic 1 ms                            ok
+read after 5.5 ms counts 5 expirations       ok
+disarm returns the old interval              ok
+done
