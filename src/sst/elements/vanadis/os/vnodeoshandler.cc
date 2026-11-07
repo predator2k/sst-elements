@@ -61,6 +61,7 @@
 #include "os/syscall/setaffinity.h"
 #include "os/syscall/prlimit.h"
 #include "os/syscall/schedyield.h"
+#include "os/syscall/emulated.h"
 
 using namespace SST::Vanadis;
 
@@ -210,15 +211,81 @@ VanadisSyscall* VanadisNodeOSComponent::handleIncomingSyscall( OS::ProcessInfo* 
             syscall = new VanadisIoctlSyscall( this, core_link, process, convertEvent<VanadisSyscallIoctlEvent*>( "ioctl", sys_ev ) );
         } break;
         case SYSCALL_OP_FSTAT: {
-            syscall = new VanadisFstatSyscall( this, core_link, process, convertEvent<VanadisSyscallFstatEvent*>( "fstat", sys_ev ) );
+            if ( stat_files_ && VanadisOSBitType::VANADIS_OS_64B == sys_ev->getOSBitType() ) {
+                syscall = new VanadisStatSyscall( this, core_link, process, convertEvent<VanadisSyscallFstatEvent*>( "fstat", sys_ev ) );
+            } else {
+                syscall = new VanadisFstatSyscall( this, core_link, process, convertEvent<VanadisSyscallFstatEvent*>( "fstat", sys_ev ) );
+            }
         } break;
         case SYSCALL_OP_FSTATAT: {
-            syscall = new VanadisFstatatSyscall( this, core_link, process, convertEvent<VanadisSyscallFstatAtEvent*>( "fstatat", sys_ev ) );
+            if ( stat_files_ && VanadisOSBitType::VANADIS_OS_64B == sys_ev->getOSBitType() ) {
+                syscall = new VanadisStatSyscall( this, core_link, process, convertEvent<VanadisSyscallFstatAtEvent*>( "fstatat", sys_ev ) );
+            } else {
+                syscall = new VanadisFstatatSyscall( this, core_link, process, convertEvent<VanadisSyscallFstatAtEvent*>( "fstatat", sys_ev ) );
+            }
         } break;
         case SYSCALL_OP_STATX: {
             syscall = new VanadisStatxSyscall( this, core_link, process, convertEvent<VanadisSyscallStatxEvent*>( "statx", sys_ev ) );
         } break;
 
+        // The calls of the user-mode DPDK environment (os/syscall/emulated.h).
+        case SYSCALL_OP_PIPE2: {
+            syscall = new VanadisPipe2Syscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "pipe2", sys_ev ) );
+        } break;
+        case SYSCALL_OP_EPOLL_CREATE1: {
+            syscall = new VanadisEpollCreate1Syscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "epoll_create1", sys_ev ) );
+        } break;
+        case SYSCALL_OP_EPOLL_CTL: {
+            syscall = new VanadisEpollCtlSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "epoll_ctl", sys_ev ) );
+        } break;
+        case SYSCALL_OP_EPOLL_PWAIT: {
+            syscall = new VanadisEpollPwaitSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "epoll_pwait", sys_ev ), getNanoSeconds() );
+        } break;
+        case SYSCALL_OP_TIMERFD_CREATE: {
+            syscall = new VanadisTimerfdCreateSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "timerfd_create", sys_ev ) );
+        } break;
+        case SYSCALL_OP_TIMERFD_SETTIME: {
+            syscall = new VanadisTimerfdSettimeSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "timerfd_settime", sys_ev ), getNanoSeconds() );
+        } break;
+        case SYSCALL_OP_TIMERFD_GETTIME: {
+            syscall = new VanadisTimerfdGettimeSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "timerfd_gettime", sys_ev ), getNanoSeconds() );
+        } break;
+        case SYSCALL_OP_CLOCK_NANOSLEEP: {
+            syscall = new VanadisNanosleepSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "clock_nanosleep", sys_ev ), getNanoSeconds(), true );
+        } break;
+        case SYSCALL_OP_NANOSLEEP: {
+            syscall = new VanadisNanosleepSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "nanosleep", sys_ev ), getNanoSeconds(), false );
+        } break;
+        case SYSCALL_OP_MEMFD_CREATE: {
+            syscall = new VanadisMemfdCreateSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "memfd_create", sys_ev ) );
+        } break;
+        case SYSCALL_OP_FTRUNCATE: {
+            syscall = new VanadisFtruncateSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "ftruncate", sys_ev ) );
+        } break;
+        case SYSCALL_OP_MLOCKALL: {
+            syscall = new VanadisImmediateSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "mlockall", sys_ev ), "mlockall", 0 );
+        } break;
+        case SYSCALL_OP_MUNLOCKALL: {
+            syscall = new VanadisImmediateSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "munlockall", sys_ev ), "munlockall", 0 );
+        } break;
+        case SYSCALL_OP_GETUID: {
+            syscall = new VanadisImmediateSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "getuid", sys_ev ), "getuid", process->getuid() );
+        } break;
+        case SYSCALL_OP_GETEUID: {
+            syscall = new VanadisImmediateSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "geteuid", sys_ev ), "geteuid", process->getuid() );
+        } break;
+        case SYSCALL_OP_GETGID: {
+            syscall = new VanadisImmediateSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "getgid", sys_ev ), "getgid", process->getgid() );
+        } break;
+        case SYSCALL_OP_GETEGID: {
+            syscall = new VanadisImmediateSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "getegid", sys_ev ), "getegid", process->getgid() );
+        } break;
+        case SYSCALL_OP_FACCESSAT: {
+            syscall = new VanadisPathSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "faccessat", sys_ev ), false );
+        } break;
+        case SYSCALL_OP_MKDIRAT: {
+            syscall = new VanadisPathSyscall( this, core_link, process, convertEvent<VanadisSyscallArgsEvent*>( "mkdirat", sys_ev ), true );
+        } break;
         default: {
             output_->fatal(CALL_INFO, -1,"Error - unknown operating system call, op %s, instPtr=%#" PRIx64 "\n",
                             SyscallName[sys_ev->getOperation()], sys_ev->getInstPtr() );

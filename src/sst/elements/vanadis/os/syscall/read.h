@@ -31,8 +31,15 @@ public:
         m_output->verbose(CALL_INFO, 16, 0, "-> call is read( %" PRId64 ", 0x%0" PRI_ADDR ", %" PRId64 " )\n",
                             event->getFileDescriptor(), event->getBufferAddress(), event->getBufferCount());
         #endif
+        m_emulated = process->getEmulatedFile( event->getFileDescriptor() );
         m_fd = process->getFileDescriptor( event->getFileDescriptor());
-        if (-1 == m_fd ) {
+        if ( m_emulated ) {
+            if ( event->getBufferCount() == 0 ) {
+                setReturnSuccess(0);
+            } else if ( ! readEmulated( os->nodeTimeNs() ) ) {
+                os->blockSyscall( this );
+            }
+        } else if (-1 == m_fd ) {
             m_output->verbose(CALL_INFO, 16, 0,
                                 "[syscall-read] -> file handle %" PRId64
                                 " is not currently open, return an error code.\n",
@@ -46,6 +53,39 @@ public:
             uint64_t length = vanadis_line_remainder(event->getBufferAddress(),64);
             length = event->getBufferCount() < length ? event->getBufferCount() : length;
             readChunk( length );
+        }
+    }
+
+    // Reads from the emulated file what it has now (at most the count) and writes it to the buffer; false when the
+    // call has to wait (nothing to read, the file is blocking).
+    bool readEmulated( uint64_t now_ns ) {
+        m_data.resize( getEvent<VanadisSyscallReadEvent*>()->getBufferCount() );
+        int64_t ret = m_emulated->read( m_data.data(), m_data.size(), now_ns );
+        if ( -EAGAIN == ret && ! m_emulated->nonblock() ) {
+            return false;
+        }
+        if ( ret <= 0 ) {
+            if ( ret < 0 ) {
+                setReturnFail( ret );
+            } else {
+                setReturnSuccess( 0 );
+            }
+            return true;
+        }
+        m_data.resize( ret );
+        m_numRead = ret;
+        writeMemory( getEvent<VanadisSyscallReadEvent*>()->getBufferAddress(), m_data );
+        return true;
+    }
+
+    bool retry( uint64_t now_ns ) override { return readEmulated( now_ns ); }
+    // A timer file or a stdin that is not ready yet becomes readable at a known time.
+    uint64_t wakeAtNs( uint64_t now_ns ) override { return m_emulated ? m_emulated->readyAtNs( now_ns ) : 0; }
+
+    // The bytes of an emulated read were written to the buffer.
+    void memReqIsDone(bool) override {
+        if ( m_emulated ) {
+            setReturnSuccess( m_numRead );
         }
     }
 
@@ -78,6 +118,9 @@ public:
 
     bool handleMemResp( StandardMem::Request* req ) {
         delete req; // we don't use the request
+        if ( m_emulated ) {
+            return false;
+        }
 
         if ( m_eof || m_numRead == getEvent<VanadisSyscallReadEvent*>()->getBufferCount() ) {
             setReturnSuccess( m_numRead );
@@ -94,6 +137,7 @@ public:
     bool                    m_eof;
     int                     m_fd;
     size_t                  m_numRead;
+    std::shared_ptr<OS::EmulatedFile> m_emulated;
 };
 
 } // namespace Vanadis

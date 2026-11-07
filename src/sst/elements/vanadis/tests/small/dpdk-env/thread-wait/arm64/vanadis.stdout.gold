@@ -1,0 +1,7 @@
+three pipes                                  ok
+start the worker                             ok
+start the interrupt thread                   ok
+pthread_setname_np and getname               ok
+three commands answered by the blocked worker ok
+join the worker                              ok
+exit with the interrupt thread blocked

@@ -52,6 +52,7 @@
 #include "os/callev/voscallunmap.h"
 #include "os/callev/voscallwrite.h"
 #include "os/callev/voscallwritev.h"
+#include "os/callev/voscallargs.h"
 #include "os/callev/voscallunlink.h"
 #include "os/callev/voscallunlinkat.h"
 #include "os/callev/voscallsettidaddr.h"

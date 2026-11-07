@@ -16,7 +16,9 @@
 #include <sst_config.h>
 #include "os/include/virtMemMap.h"
 
+#include <algorithm>
 #include <queue>
+#include <vector>
 #include <iterator>
 #include <string>
 #include <string.h>
@@ -344,7 +346,9 @@ void VirtMemMap::shrinkRegion( MemoryRegion* region, uint64_t addr, size_t lengt
     VirtMemDbg("%s addr=%#" PRIx64 "->%#" PRIx64 " length=%zu->%zu\n",
         region->name_.c_str(), region->addr_, addr, region->length_, length);
 
-    uint64_t free_addr = (addr == region->addr_) ? addr + length : addr;
+    // The pages that leave the region: its tail when the start stays, its head when the start moves (upstream freed
+    // [addr, addr + removed) in the second case, which are pages the region keeps).
+    uint64_t free_addr = (addr == region->addr_) ? addr + length : region->addr_;
     uint64_t free_length = region->length_ - length; // shrinking so length < region->length_
 
     free_list_->free( free_addr, free_length );
@@ -458,6 +462,60 @@ uint64_t VirtMemMap::mmap( size_t length, uint32_t perms, Device* dev ) {
     return start;
 }
 
+uint64_t VirtMemMap::mmapAt( uint64_t addr, size_t length, uint32_t perms, Device* dev, bool fixed ) {
+    std::string name("mmap");
+    MemoryBacking* backing = nullptr;
+    if ( dev ) {
+        backing = new MemoryBacking( dev );
+        name = dev->getName();
+    }
+    if ( fixed ) {
+        unmapRange( addr, length );
+    } else if ( addr ) {
+        // A hint: take it only when no region holds a page of the range and the free list has it.
+        bool clash = false;
+        for ( auto& kv : region_map_ ) {
+            if ( kv.second->addr_ < addr + length && addr < kv.second->end() ) {
+                clash = true;
+            }
+        }
+        if ( clash || ! free_list_->alloc( addr, length ) ) {
+            addr = 0;
+        } else {
+            region_map_[addr] = new MemoryRegion( name, addr, length, perms, backing );
+            return addr;
+        }
+    }
+    if ( fixed ) {
+        if ( ! free_list_->alloc( addr, length ) ) {
+            return 0;
+        }
+        region_map_[addr] = new MemoryRegion( name, addr, length, perms, backing );
+        return addr;
+    }
+    uint64_t start = free_list_->alloc( length );
+    if ( ! start ) {
+        return 0;
+    }
+    region_map_[start] = new MemoryRegion( name, start, length, perms, backing );
+    return start;
+}
+
+void VirtMemMap::unmapRange( uint64_t addr, size_t length ) {
+    uint64_t end = addr + length;
+    std::vector<std::pair<uint64_t, size_t>> parts;
+    for ( auto& kv : region_map_ ) {
+        uint64_t lo = std::max( addr, kv.second->addr_ );
+        uint64_t hi = std::min( end, kv.second->end() );
+        if ( lo < hi ) {
+            parts.push_back( std::make_pair( lo, hi - lo ) );
+        }
+    }
+    for ( auto& p : parts ) {
+        unmap( p.first, p.second );
+    }
+}
+
 int VirtMemMap::unmap( uint64_t addr, size_t length ) {
     VirtMemDbg("addr=%#" PRIx64 " length=%zu\n", addr, length);
 
@@ -476,7 +534,8 @@ int VirtMemMap::unmap( uint64_t addr, size_t length ) {
         // Entire region is unmapped
         if ( unmap_addr == region->addr_ && unmap_length >= region->length_ ) {
             unmap_length -= region->length_;
-            unmap_addr -= region->length_;
+            // The next region starts where this one ended (upstream subtracted here).
+            unmap_addr += region->length_;
             VirtMemDbg("unmap->removeRegion(%s, 0x%#" PRIx64 ")\n", region->name_, region->addr_);
             removeRegion(region);
 

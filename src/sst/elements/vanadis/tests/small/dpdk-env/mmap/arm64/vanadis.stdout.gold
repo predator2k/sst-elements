@@ -1,0 +1,21 @@
+PROT_NONE reservation with MAP_NORESERVE         ok
+madvise MADV_DONTDUMP                            ok
+MAP_FIXED inside the reservation                 ok
+  the pages hold what was written                ok
+MAP_FIXED over written pages                     ok
+  replaced pages read zero                       ok
+  neighbours keep their bytes                    ok
+munmap the head of the reservation               ok
+munmap the tail of the reservation               ok
+munmap a range that holds a hole                 ok
+munmap the rest                                  ok
+MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE        ok
+  shared anonymous pages are writable            ok
+memfd_create                                     ok
+ftruncate the memory file                        ok
+reservation at an address hint                   ok
+MAP_SHARED | MAP_FIXED of the memory file        ok
+  memory file pages start zero and take writes   ok
+mlockall MCL_CURRENT | MCL_FUTURE                ok
+munlockall                                       ok
+done

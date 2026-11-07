@@ -64,6 +64,9 @@
 #define ARM64_MAP_ANONYMOUS 0x20
 #define ARM64_MAP_PRIVATE 0x2
 #define ARM64_MAP_FIXED 0x10
+#define ARM64_MAP_SHARED 0x1
+#define ARM64_MAP_NORESERVE 0x4000
+#define ARM64_MAP_POPULATE 0x8000
 
 #define VANADIS_SYSCALL_ARM64_IOCTL 29
 #define VANADIS_SYSCALL_ARM64_RM_INOTIFY 28
@@ -114,6 +117,36 @@
 
 #define VANADIS_SYSCALL_ARM64_RET_REG 0
 
+// Calls added for the user-mode DPDK environment (asm-generic numbers, include/uapi/asm-generic/unistd.h).
+#define VANADIS_SYSCALL_ARM64_EPOLL_CREATE1 20
+#define VANADIS_SYSCALL_ARM64_EPOLL_CTL 21
+#define VANADIS_SYSCALL_ARM64_EPOLL_PWAIT 22
+#define VANADIS_SYSCALL_ARM64_MKDIRAT 34
+#define VANADIS_SYSCALL_ARM64_FTRUNCATE 46
+#define VANADIS_SYSCALL_ARM64_FACCESSAT 48
+#define VANADIS_SYSCALL_ARM64_PIPE2 59
+#define VANADIS_SYSCALL_ARM64_TIMERFD_CREATE 85
+#define VANADIS_SYSCALL_ARM64_TIMERFD_SETTIME 86
+#define VANADIS_SYSCALL_ARM64_TIMERFD_GETTIME 87
+#define VANADIS_SYSCALL_ARM64_NANOSLEEP 101
+#define VANADIS_SYSCALL_ARM64_CLOCK_NANOSLEEP 115
+#define VANADIS_SYSCALL_ARM64_GETUID 174
+#define VANADIS_SYSCALL_ARM64_GETEUID 175
+#define VANADIS_SYSCALL_ARM64_GETGID 176
+#define VANADIS_SYSCALL_ARM64_GETEGID 177
+#define VANADIS_SYSCALL_ARM64_MLOCKALL 230
+#define VANADIS_SYSCALL_ARM64_MUNLOCKALL 231
+#define VANADIS_SYSCALL_ARM64_MEMFD_CREATE 279
+#define VANADIS_SYSCALL_ARM64_FACCESSAT2 439
+
+// A call whose OS side takes the six argument registers as they are (VanadisSyscallArgsEvent).
+#define ARM64_ARGS_SYSCALL( name ) \
+    VanadisSyscallEvent* name( int hw_thr ) { \
+        return new VanadisSyscallArgsEvent( core_id_, hw_thr, VanadisOSBitType::VANADIS_OS_64B, SYSCALL_OP_##name, \
+            getArgRegister(0), getArgRegister(1), getArgRegister(2), getArgRegister(3), getArgRegister(4), \
+            getArgRegister(5) ); \
+    }
+
 #define InstallARM64FuncPtr( funcName ) Install_ISA_FuncPtr( ARM64, funcName )
 
 namespace SST {
@@ -153,7 +186,48 @@ public:
         InstallARM64FuncPtr( HWPROBE );
         InstallARM64FuncPtr( RSEQ );
         InstallARM64FuncPtr( CHECKPOINT );
+
+        InstallARM64FuncPtr( EPOLL_CREATE1 );
+        InstallARM64FuncPtr( EPOLL_CTL );
+        InstallARM64FuncPtr( EPOLL_PWAIT );
+        InstallARM64FuncPtr( MKDIRAT );
+        InstallARM64FuncPtr( FTRUNCATE );
+        InstallARM64FuncPtr( FACCESSAT );
+        install( VANADIS_SYSCALL_ARM64_FACCESSAT2, Make_ISA_FuncPtr( ARM64, FACCESSAT ) );
+        InstallARM64FuncPtr( PIPE2 );
+        InstallARM64FuncPtr( TIMERFD_CREATE );
+        InstallARM64FuncPtr( TIMERFD_SETTIME );
+        InstallARM64FuncPtr( TIMERFD_GETTIME );
+        InstallARM64FuncPtr( NANOSLEEP );
+        InstallARM64FuncPtr( CLOCK_NANOSLEEP );
+        InstallARM64FuncPtr( GETUID );
+        InstallARM64FuncPtr( GETEUID );
+        InstallARM64FuncPtr( GETGID );
+        InstallARM64FuncPtr( GETEGID );
+        InstallARM64FuncPtr( MLOCKALL );
+        InstallARM64FuncPtr( MUNLOCKALL );
+        InstallARM64FuncPtr( MEMFD_CREATE );
     }
+
+    ARM64_ARGS_SYSCALL( EPOLL_CREATE1 )
+    ARM64_ARGS_SYSCALL( EPOLL_CTL )
+    ARM64_ARGS_SYSCALL( EPOLL_PWAIT )
+    ARM64_ARGS_SYSCALL( MKDIRAT )
+    ARM64_ARGS_SYSCALL( FTRUNCATE )
+    ARM64_ARGS_SYSCALL( FACCESSAT )
+    ARM64_ARGS_SYSCALL( PIPE2 )
+    ARM64_ARGS_SYSCALL( TIMERFD_CREATE )
+    ARM64_ARGS_SYSCALL( TIMERFD_SETTIME )
+    ARM64_ARGS_SYSCALL( TIMERFD_GETTIME )
+    ARM64_ARGS_SYSCALL( NANOSLEEP )
+    ARM64_ARGS_SYSCALL( CLOCK_NANOSLEEP )
+    ARM64_ARGS_SYSCALL( GETUID )
+    ARM64_ARGS_SYSCALL( GETEUID )
+    ARM64_ARGS_SYSCALL( GETGID )
+    ARM64_ARGS_SYSCALL( GETEGID )
+    ARM64_ARGS_SYSCALL( MLOCKALL )
+    ARM64_ARGS_SYSCALL( MUNLOCKALL )
+    ARM64_ARGS_SYSCALL( MEMFD_CREATE )
 
     virtual ~VanadisARM64OSHandler2() {}
 
@@ -277,36 +351,46 @@ public:
 
         int32_t hostFlags = 0;
 
-        if ( map_flags & ARM64_MAP_FIXED ) {
-            output_->verbose(CALL_INFO, 8, 0,"mmap() we don't support MAP_FIXED return error EEXIST\n");
-
-            recvSyscallResp(new VanadisSyscallResponse(-EEXIST));
-            return nullptr;
-        } else {
-
-            // ignore this flag
-            if ( map_flags & ARM64_MAP_STACK ) {
-                map_flags &= ~ARM64_MAP_STACK;
-            }
-            if ( map_flags & ARM64_MAP_ANONYMOUS ) {
-                hostFlags |= MAP_ANONYMOUS;
-                map_flags &= ~ARM64_MAP_ANONYMOUS;
-            }
-            if ( map_flags & ARM64_MAP_PRIVATE ) {
-                hostFlags |= MAP_PRIVATE;
-                map_flags &= ~ARM64_MAP_PRIVATE;
-            }
-            this->sst_assert( map_flags == 0, CALL_INFO, -1, "Unhandled mmap flags" );
-
-            #ifdef VANADIS_BUILD_DEBUG
-            output_->verbose(CALL_INFO, 8, 0,
-                        "mmap2( 0x%" PRI_ADDR ", %" PRIu64 ", %" PRId32 ", %" PRId32 ", %d, %" PRIu64 ")\n",
-                        map_addr, map_len, map_prot, map_flags, fd, offset );
-            #endif
-
-            return new VanadisSyscallMemoryMapEvent(core_id_, hw_thr, VanadisOSBitType::VANADIS_OS_64B,
-                    map_addr, map_len, map_prot, hostFlags, fd, offset, 0, 0);
+        // ignore this flag
+        if ( map_flags & ARM64_MAP_STACK ) {
+            map_flags &= ~ARM64_MAP_STACK;
         }
+        if ( map_flags & ARM64_MAP_ANONYMOUS ) {
+            hostFlags |= MAP_ANONYMOUS;
+            map_flags &= ~ARM64_MAP_ANONYMOUS;
+        }
+        if ( map_flags & ARM64_MAP_PRIVATE ) {
+            hostFlags |= MAP_PRIVATE;
+            map_flags &= ~ARM64_MAP_PRIVATE;
+        }
+        // The node OS decides about these (os/syscall/mmap.h): MAP_FIXED fails with EEXIST unless its parameter
+        // mmap_fixed_replace is set, as upstream; MAP_SHARED, MAP_NORESERVE, MAP_POPULATE need it too.
+        if ( map_flags & ARM64_MAP_FIXED ) {
+            hostFlags |= MAP_FIXED;
+            map_flags &= ~ARM64_MAP_FIXED;
+        }
+        if ( map_flags & ARM64_MAP_SHARED ) {
+            hostFlags |= MAP_SHARED;
+            map_flags &= ~ARM64_MAP_SHARED;
+        }
+        if ( map_flags & ARM64_MAP_NORESERVE ) {
+            hostFlags |= MAP_NORESERVE;
+            map_flags &= ~ARM64_MAP_NORESERVE;
+        }
+        if ( map_flags & ARM64_MAP_POPULATE ) {
+            hostFlags |= MAP_POPULATE;
+            map_flags &= ~ARM64_MAP_POPULATE;
+        }
+        this->sst_assert( map_flags == 0, CALL_INFO, -1, "Unhandled mmap flags" );
+
+        #ifdef VANADIS_BUILD_DEBUG
+        output_->verbose(CALL_INFO, 8, 0,
+                    "mmap2( 0x%" PRI_ADDR ", %" PRIu64 ", %" PRId32 ", %" PRId32 ", %d, %" PRIu64 ")\n",
+                    map_addr, map_len, map_prot, map_flags, fd, offset );
+        #endif
+
+        return new VanadisSyscallMemoryMapEvent(core_id_, hw_thr, VanadisOSBitType::VANADIS_OS_64B,
+                map_addr, map_len, map_prot, hostFlags, fd, offset, 0, 0);
     }
 
     VanadisSyscallEvent* CLOCK_GETTIME( int hw_thr ) {
@@ -454,6 +538,10 @@ public:
         SST_ELI_ELEMENT_VERSION(1, 0, 0),
         "Provides SYSCALL handling for a AArch64 decoding core",
         SST::Vanadis::VanadisCPUOSHandler)
+
+    SST_ELI_DOCUMENT_PARAMS(
+        { "verbose", "Verbosity of the handler", "0" },
+        { "unknown_syscall", "A system call number without a handler: ignore (returns at once, x0 unchanged, as upstream), enosys (returns -ENOSYS, as Linux) or fatal", "ignore" })
 
     VanadisARM64OSHandler(ComponentId_t id, Params& params) :
         VanadisARM64OSHandler2<uint64_t, VanadisOSBitType::VANADIS_OS_64B, ARM64_ARG_REG_ZERO, ARM64_OS_CODE_REG, ARM64_LINK_REG >(id, params) { }

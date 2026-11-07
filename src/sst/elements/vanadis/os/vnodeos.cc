@@ -126,6 +126,37 @@ VanadisNodeOSComponent::VanadisNodeOSComponent(SST::ComponentId_t id, SST::Param
 
     node_num_ = params.find<int>("node_id", -1);
 
+    // Devices, the node's own /sys and /proc entries and stdin (all empty by default: upstream behaviour).
+    {
+        std::vector<std::string> dev_paths;
+        std::vector<uint64_t> dev_bases, dev_bytes;
+        params.find_array<std::string>("device_paths", dev_paths);
+        params.find_array<uint64_t>("device_bases", dev_bases);
+        params.find_array<uint64_t>("device_bytes", dev_bytes);
+        if ( dev_paths.size() != dev_bases.size() || dev_paths.size() != dev_bytes.size() ) {
+            output_->fatal(CALL_INFO, -1, "Error: %s: device_paths, device_bases and device_bytes have %zu, %zu and %zu entries\n",
+                getName().c_str(), dev_paths.size(), dev_bases.size(), dev_bytes.size());
+        }
+        for ( size_t k = 0; k < dev_paths.size(); k++ ) {
+            if ( dev_bases[k] % page_size_ || 0 == dev_bytes[k] ) {
+                output_->fatal(CALL_INFO, -1, "Error: %s: device %s needs a page-aligned base and a size above 0\n",
+                    getName().c_str(), dev_paths[k].c_str());
+            }
+            // The built-in devices use -1000 and -2000; these take -3000, -3001, ...
+            device_list_[ -3000 - (int)k ] = new OS::Device( dev_paths[k], dev_bases[k], dev_bytes[k] );
+        }
+        params.find_array<std::string>("mapped_prefixes", mapped_prefixes_);
+        mapped_dir_ = params.find<std::string>("mapped_dir", "");
+        if ( ! mapped_prefixes_.empty() && mapped_dir_.empty() ) {
+            output_->fatal(CALL_INFO, -1, "Error: %s: mapped_prefixes needs mapped_dir\n", getName().c_str());
+        }
+        stdin_file_ = params.find<std::string>("stdin_file", "");
+        mmap_fixed_replace_ = params.find<bool>("mmap_fixed_replace", false);
+        stat_files_ = params.find<bool>("stat_files", false);
+        stdin_ready_ns_ = params.find<uint64_t>("stdin_ready_ns", 0) + os_start_time_nano_;
+    }
+    retrying_ = false;
+
     core_info_.resize( core_count_, hardware_thread_count_ );
 
     int process_number = 0;
@@ -160,6 +191,22 @@ VanadisNodeOSComponent::VanadisNodeOSComponent(SST::ComponentId_t id, SST::Param
                 ++process_number;
             } else {
                 break;
+            }
+        }
+
+        if ( ! stdin_file_.empty() ) {
+            for ( auto& kv : thread_map_ ) {
+                FILE* fp = fopen( stdin_file_.c_str(), "rb" );
+                if ( nullptr == fp ) {
+                    output_->fatal(CALL_INFO, -1, "Error: %s: cannot read stdin_file %s\n", getName().c_str(), stdin_file_.c_str());
+                }
+                std::vector<uint8_t> bytes;
+                int c;
+                while ( EOF != ( c = fgetc(fp) ) ) {
+                    bytes.push_back( (uint8_t)c );
+                }
+                fclose(fp);
+                kv.second->openEmulatedFile( "stdin", std::make_shared<OS::StaticFile>( bytes, stdin_ready_ns_ ), O_RDONLY, 0 );
             }
         }
 
@@ -218,6 +265,9 @@ VanadisNodeOSComponent::VanadisNodeOSComponent(SST::ComponentId_t id, SST::Param
     }
 
     delete[] port_name_buffer;
+
+    timer_link_ = configureSelfLink( "timer", "1ns",
+        new Event::Handler<VanadisNodeOSComponent,&VanadisNodeOSComponent::handleTimer>(this));
 
     device_list_[-1000] = new OS::Device( "/dev/rdmaNic", 0x80000000, 1048576 );
     // Add balar to vanadis device list
@@ -676,6 +726,83 @@ VanadisNodeOSComponent::handleIncomingSyscallEvent(SST::Event* ev) {
     }
 }
 
+std::string VanadisNodeOSComponent::hostPath( const std::string& path ) const {
+    for ( const auto& prefix : mapped_prefixes_ ) {
+        if ( 0 == path.compare( 0, prefix.size(), prefix ) && ( path.size() == prefix.size() || '/' == path[prefix.size()] ) ) {
+            return mapped_dir_ + path;
+        }
+    }
+    return path;
+}
+
+OS::Device* VanadisNodeOSComponent::findDeviceByPath( const std::string& path ) {
+    // Only the devices of device_paths have a file; the built-in ones are reached by their fd numbers, as upstream.
+    for ( auto& kv : device_list_ ) {
+        if ( kv.first <= -3000 && kv.second->getName() == path ) {
+            return kv.second;
+        }
+    }
+    return nullptr;
+}
+
+void VanadisNodeOSComponent::blockSyscall( VanadisSyscall* syscall ) {
+    blocked_syscalls_.push_back( syscall );
+    uint64_t now = getNanoSeconds();
+    uint64_t at = syscall->wakeAtNs( now );
+    if ( at > now ) {
+        timer_link_->send( at - now, new SST::EmptyEvent() );
+    } else if ( at ) {
+        timer_link_->send( 0, new SST::EmptyEvent() );
+    }
+}
+
+void VanadisNodeOSComponent::retryBlockedSyscalls() {
+    if ( retrying_ ) {
+        return;
+    }
+    retrying_ = true;
+    bool progress = true;
+    // A call that made progress may unblock another (a pipe write wakes its reader), so repeat until none moves.
+    while ( progress ) {
+        progress = false;
+        uint64_t now = getNanoSeconds();
+        std::vector<VanadisSyscall*> waiting;
+        waiting.swap( blocked_syscalls_ );
+        for ( auto* syscall : waiting ) {
+            if ( syscall->retry( now ) ) {
+                progress = true;
+                processSyscallPost( syscall );
+            } else {
+                blocked_syscalls_.push_back( syscall );
+            }
+        }
+    }
+    // Ask again for the earliest time a waiting call wants.
+    uint64_t now = getNanoSeconds();
+    for ( auto* syscall : blocked_syscalls_ ) {
+        uint64_t at = syscall->wakeAtNs( now );
+        if ( at > now ) {
+            timer_link_->send( at - now, new SST::EmptyEvent() );
+        }
+    }
+    retrying_ = false;
+}
+
+void VanadisNodeOSComponent::discardBlockedSyscall( uint32_t core, uint32_t hw_thread ) {
+    for ( auto it = blocked_syscalls_.begin(); it != blocked_syscalls_.end(); ++it ) {
+        if ( (uint32_t)(*it)->getCoreId() == core && (uint32_t)(*it)->getThreadId() == hw_thread ) {
+            // The object is not deleted: its destructor would answer a halted hardware thread, and its process is gone.
+            blocked_syscalls_.erase( it );
+            return;
+        }
+    }
+}
+
+void VanadisNodeOSComponent::handleTimer( SST::Event* ev ) {
+    delete ev;
+    retryBlockedSyscalls();
+}
+
 void VanadisNodeOSComponent::processSyscallPost( VanadisSyscall* syscall ) {
 
     auto core = syscall->getCoreId();
@@ -688,6 +815,10 @@ void VanadisNodeOSComponent::processSyscallPost( VanadisSyscall* syscall ) {
         output_->verbose(CALL_INFO, 16, 0,"syscall '%s' for core %d has finished\n",syscall->getName().c_str(),core);
         #endif
         delete syscall;
+        // A completed call may have written a pipe or set a timer that a blocked call waits for.
+        if ( ! blocked_syscalls_.empty() ) {
+            retryBlockedSyscalls();
+        }
 
     } else {
         #ifdef VANADIS_BUILD_DEBUG

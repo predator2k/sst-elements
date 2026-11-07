@@ -25,7 +25,11 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
+#include <cstring>
+#include <memory>
 #include <unordered_map>
+
+#include "os/include/emulatedFile.h"
 
 namespace SST {
 namespace Vanadis {
@@ -36,6 +40,14 @@ class FileDescriptor {
 public:
     FileDescriptor( const FileDescriptor& obj ) {
         path=obj.path;
+        emulated = obj.emulated;
+        if ( emulated ) {
+            // A forked process shares the open file, as after dup().
+            fd = -1;
+            flags = obj.flags;
+            mode = obj.mode;
+            return;
+        }
 
         int flags = fcntl(obj.fd, F_GETFL);
 
@@ -87,13 +99,22 @@ public:
     }
 
 
+    // A file the node OS keeps itself; path names it for messages and the checkpoint.
+    FileDescriptor( const std::string& name, std::shared_ptr<EmulatedFile> file, int flags ) : path(name), fd(-1),
+        flags(flags), mode(0), emulated(file) {}
+
     ~FileDescriptor() {
         if ( -1 != fd ) {
             close(fd);
         }
     }
 
+    std::shared_ptr<EmulatedFile> getEmulated() const { return emulated; }
+
     int openLate() {
+        if ( emulated ) {
+            return -1;
+        }
         fd = open(path.c_str(), flags, mode );
         if ( -1 == fd ) {
             printf("%s() FAILED: %s flags=%#x mode=0x%" PRIxMAX "\n",__func__,path.c_str(),flags, (uintmax_t)mode);
@@ -118,6 +139,10 @@ public:
         assert( 1 == f );
         output->verbose(CALL_INFO, 0, VANADIS_DBG_CHECKPOINT,"path: %s\n",str );
         path = str;
+        if ( 0 == path.compare( 0, strlen("emulated:"), "emulated:" ) ) {
+            output->fatal(CALL_INFO, -1, "Error: the checkpoint holds the emulated file %s (pipe, epoll, timer, device, "
+                "memory or configured file); the node OS cannot restore emulated files\n", str );
+        }
 
         f = fscanf(fp,"fd: %d\n", &fd);
         assert( 1 == f );
@@ -133,7 +158,13 @@ public:
     }
 
     void checkpoint( FILE* fp) {
-        fprintf(fp, "path: %s\n", path.c_str() );
+        // An emulated file (pipe, epoll, timer, device, ...) has no host file to reopen; its path is written with the
+        // prefix "emulated:" and a restore of it is reported as an error (see FileDescriptorTable).
+        if ( emulated ) {
+            fprintf(fp, "path: emulated:%s\n", path.c_str() );
+        } else {
+            fprintf(fp, "path: %s\n", path.c_str() );
+        }
         fprintf(fp, "fd: %d\n", fd );
         fprintf(fp, "flags: %d\n", flags );
         fprintf(fp, "mode: %" PRIuMAX "\n", (uintmax_t)mode );
@@ -144,6 +175,7 @@ protected:
     int fd;
     int flags;
     mode_t mode;
+    std::shared_ptr<EmulatedFile> emulated;
 };
 
 class FileDescriptorTable {
@@ -210,6 +242,31 @@ public:
         return fd;
     }
 
+    // Opens a file the node OS keeps itself; fd -1 takes the lowest free descriptor.
+    int openEmulated( const std::string& name, std::shared_ptr<EmulatedFile> file, int flags, int fd = -1 ) {
+        if ( -1 == fd ) {
+            fd = findFreeFd();
+        } else if ( m_fileDescriptors.find(fd) != m_fileDescriptors.end() ) {
+            delete m_fileDescriptors[fd];
+        }
+        if ( fd >= 0 ) {
+            m_fileDescriptors[fd] = new FileDescriptor( name, file, flags );
+        }
+        return fd;
+    }
+
+    // The emulated file of a descriptor, or null when it is a host file or not open.
+    std::shared_ptr<EmulatedFile> getEmulated( uint32_t handle ) {
+        auto iter = m_fileDescriptors.find(handle);
+        if ( iter == m_fileDescriptors.end() ) {
+            return nullptr;
+        }
+        return iter->second->getEmulated();
+    }
+
+    // Whether a descriptor is open (host or emulated file).
+    bool isOpen( uint32_t handle ) { return m_fileDescriptors.find(handle) != m_fileDescriptors.end(); }
+
     int findFreeFd() {
         int fd = 3;
         while (m_fileDescriptors.find(fd) != m_fileDescriptors.end() && fd < m_maxFD) {
@@ -224,6 +281,9 @@ public:
     int getDescriptor( uint32_t handle ) {
         auto iter= m_fileDescriptors.find(handle);
         if (iter == m_fileDescriptors.end()) {
+            return -1;
+        }
+        if ( iter->second->getEmulated() ) {
             return -1;
         }
         auto fd = iter->second->getFileDescriptor();

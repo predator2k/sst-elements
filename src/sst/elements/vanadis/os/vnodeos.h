@@ -71,6 +71,15 @@ public:
         { "physical_page_order", "Order in which the MMU gives out physical pages: first_free (the lowest free page) or random (a seeded random order, so the cache sets of a buffer do not follow its virtual addresses)", "first_free" },
         { "physical_page_seed", "Seed of the random physical page order", "1" },
         { "physical_page_colors", "With the random order, a page for a virtual page has the same number modulo this as the virtual page, as a cache indexed by the virtual address sees it; 1 is no such constraint", "1" },
+        { "device_paths", "Device files the program can open and mmap, e.g. [/dev/yasai_nic0]; each maps the physical window of the same index in device_bases and device_bytes (empty: only the built-in /dev/rdmaNic and /dev/balar, as upstream)", "[]" },
+        { "device_bases", "First physical address of each device window of device_paths", "[]" },
+        { "device_bytes", "Bytes of each device window of device_paths", "[]" },
+        { "mapped_prefixes", "Path prefixes of the program (e.g. /sys/devices/system) that resolve inside the host directory mapped_dir, so the node has its own /sys and /proc entries (empty: host paths, as upstream)", "[]" },
+        { "mapped_dir", "Host directory that holds the files under mapped_prefixes", "" },
+        { "mmap_fixed_replace", "mmap follows Linux for MAP_FIXED (replaces the pages of the range), MAP_SHARED, MAP_NORESERVE, MAP_POPULATE and address hints; false: MAP_FIXED fails with EEXIST and the other flags are fatal, as upstream", "false" },
+        { "stat_files", "fstat and newfstatat of a 64-bit process report the file (host files through mapped_prefixes, emulated files by kind and size); false: both fail with EINVAL, as upstream", "false" },
+        { "stdin_file", "Host file that is the process's stdin (empty: no fd 0, as upstream)", "" },
+        { "stdin_ready_ns", "Simulated time (ns from the start) at which stdin becomes readable; a read before it blocks", "0" },
         { "process%(processnum)d.env_count", "Number of environment variables to pass to the process", "0"},
         { "process%(processnum)d.env%(argnum)d", "Environment variable to pass to the process. Example: 'OMPNUMTHREADS=64'. 'argnum' should be contiguous starting at 0 and ending at env_count-1", ""},
         { "proccess%(processnum)d.exe", "Name of executable, including path", NULL},
@@ -385,8 +394,51 @@ public:
     uint32_t getNumCores() { return core_count_; }
     uint32_t getNumHwThreads() { return hardware_thread_count_; }
 
+    // Blocking system calls (a read of an empty pipe, epoll_pwait, clock_nanosleep, a read of a timer file or of a
+    // stdin that is not ready yet). The call keeps its hardware thread waiting: it stays here until its retry()
+    // makes progress, which is tried after every completed system call (a write to a pipe, a timer set) and at the
+    // time the call asks for (wakeAtNs()), through the self link "timer".
+    void blockSyscall( VanadisSyscall* syscall );
+    // The node time of clock_gettime (osStartTimeNano plus the simulated time), ns.
+    uint64_t nodeTimeNs() { return getCurrentSimTimeNano() + os_start_time_nano_; }
+    // Retries every blocked system call once; the ones that made progress continue through processSyscallPost().
+    void retryBlockedSyscalls();
+    // Forgets the blocked call of a hardware thread whose thread exit_group ends; the thread gets no answer.
+    void discardBlockedSyscall( uint32_t core, uint32_t hw_thread );
+    // The host path that a path of the program names. A path under one of the parameter mapped_prefixes (the
+    // node's own /sys and /proc entries) resolves inside the host directory mapped_dir, so a file the
+    // configuration did not write there is absent; other paths are host paths, as upstream.
+    std::string hostPath( const std::string& path ) const;
+    // The device whose file name is path, or null.
+    OS::Device* findDeviceByPath( const std::string& path );
+    // The name a thread-name file of /proc holds (one per path; empty until written).
+    std::shared_ptr<std::string> threadName( const std::string& path ) {
+        auto& name = thread_names_[path];
+        if ( ! name ) {
+            name = std::make_shared<std::string>();
+        }
+        return name;
+    }
+    // The process's stdin (parameter stdin_file; empty: no stdin, as upstream) and the node time (ns, the clock of
+    // clock_gettime, osStartTimeNano plus the simulated time) at which it becomes readable (stdin_ready_ns).
+    const std::string& stdinFile() const { return stdin_file_; }
+    // Whether mmap follows Linux for MAP_FIXED and the other flags (parameter mmap_fixed_replace).
+    bool mmapFixedReplace() const { return mmap_fixed_replace_; }
+    uint64_t stdinReadyNs() const { return stdin_ready_ns_; }
 
 private:
+    // Timer of the blocked system calls: one event per wanted wake-up time.
+    void handleTimer( SST::Event* ev );
+    std::vector<VanadisSyscall*> blocked_syscalls_;
+    SST::Link*                   timer_link_;
+    bool                         retrying_;
+    std::map<std::string, std::shared_ptr<std::string>> thread_names_;
+    std::vector<std::string>     mapped_prefixes_;
+    std::string                  mapped_dir_;
+    std::string                  stdin_file_;
+    bool                         mmap_fixed_replace_;
+    bool                         stat_files_;
+    uint64_t                     stdin_ready_ns_;
 
     SST::Output*                output_;
     std::vector<SST::Link*>     core_links_;
