@@ -288,8 +288,6 @@ private:
     // streaming_writes: a write miss to line X is a streaming write when the two lines below X were write misses and the
     // lower one has been written in whole. The lines of the last write misses, newest last, and the bytes written in each.
     bool streaming_writes_ = false;
-    // streaming_write_on_arrival: the written bytes count when the write arrives rather than when it is applied.
-    bool streaming_write_on_arrival_ = false;
     static constexpr size_t STREAM_LINES = 4;
     std::vector<std::pair<Addr, uint64_t>> write_miss_lines_;
     // Records bytes [offset, offset + size) of line written, when it is one of the last write-miss lines.
