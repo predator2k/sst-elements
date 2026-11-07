@@ -112,6 +112,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     int_phys_reg_producer.assign(int_reg_count, nullptr);
     fp_phys_reg_producer.assign(fp_reg_count, nullptr);
     renamed_in_rob.assign(hw_threads, 0);
+    renamed_syscalls.assign(hw_threads, 0);
     misprediction_extra_cycles = params.find<uint64_t>("misprediction_extra_cycles", 0);
     recover_at_execute = params.find<bool>("recover_at_execute", false);
     retire_instructions_per_cycle = params.find<uint32_t>("retire_instructions_per_cycle", 0);
@@ -604,6 +605,8 @@ VanadisCore::performRename(const uint32_t hw_thr)
     const size_t rob_size = thr_rob->size();
 
     for ( uint32_t done = 0; done < renames_per_cycle && renamed_in_rob[hw_thr] < rob_size; ) {
+        // With other hardware threads, nothing younger than a system call is renamed until the call retires.
+        if ( hw_threads > 1 && renamed_syscalls[hw_thr] > 0 ) return;
         VanadisInstruction* ins = thr_rob->peekAt(renamed_in_rob[hw_thr]);
         if ( ! ins->isElementCompanion() ) done++;
 
@@ -646,6 +649,7 @@ VanadisCore::performRename(const uint32_t hw_thr)
             last_alternate_sequence_ = ins->getProgramSequence();
         }
         renamed_in_rob[hw_thr]++;
+        if ( INST_SYSCALL == ins_type ) renamed_syscalls[hw_thr]++;
     }
 }
 
@@ -1401,6 +1405,9 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
             if ( rename_at_dispatch ) last_retired_address[rob_num] = rob->peek()->getInstructionAddress();
             retired_group_end_ = rob->peek()->endsMicroOpGroup();
             if ( retired_group_end_ ) thr_decoder->noteROBInstructionsLeft(1);
+            if ( rename_at_dispatch && INST_SYSCALL == rob->peek()->getInstFuncType() && renamed_syscalls[rob_num] > 0 ) {
+                renamed_syscalls[rob_num]--;
+            }
             rob->pop();
             if ( rename_at_dispatch ) renamed_in_rob[rob_num]--;
 
@@ -1948,8 +1955,10 @@ VanadisCore::tick(SST::Cycle_t cycle)
     if ( rename_at_dispatch ) {
         issue_stage_cycle = cycle;
         if ( 0 == cycle % LOAD_WAIT_CLEAR_CYCLES ) std::fill(load_waits_for_stores.begin(), load_waits_for_stores.end(), 0);
-        for ( uint32_t thr = 0; thr < hw_threads; ++thr ) {
-            performRename(thr);
+        // The thread that renames first takes the free physical registers and issue-queue entries, so the first one
+        // changes every cycle (with one hardware thread this is the old order).
+        for ( uint32_t k = 0; k < hw_threads; ++k ) {
+            performRename((k + cycle) % hw_threads);
         }
     }
 
@@ -2665,6 +2674,11 @@ VanadisCore::squashYounger(const uint64_t cycle, const uint32_t thr, VanadisSpec
     }
     thread_decoders[thr]->noteROBInstructionsLeft(squashed_instructions);
     renamed_in_rob[thr] = thr_rob->size();
+    // The system calls that stay (older than the branch).
+    renamed_syscalls[thr] = 0;
+    for ( size_t i = 0; i < thr_rob->size(); ++i ) {
+        if ( INST_SYSCALL == thr_rob->peekAt(i)->getInstFuncType() ) renamed_syscalls[thr]++;
+    }
 
     // The rename table maps what the retired state and the instructions that stay map.
     issue_table->copyMappings(retire_isa_tables[thr]);
@@ -2764,6 +2778,7 @@ VanadisCore::clearROBMisspeculate(const uint32_t hw_thr)
     // clear the ROB entries and reset
     thr_rob->clear();
     renamed_in_rob[hw_thr] = 0;
+    renamed_syscalls[hw_thr] = 0;
     thread_decoders[hw_thr]->clearROBInstructions();
 }
 
@@ -3236,6 +3251,7 @@ VanadisCore::resetHwThread(uint32_t thr)
         }
     }
     renamed_in_rob[thr] = 0;
+    renamed_syscalls[thr] = 0;
 
     thr_rob->clear();
 

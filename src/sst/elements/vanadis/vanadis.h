@@ -340,6 +340,11 @@ private:
     std::vector<VanadisInstruction*> int_phys_reg_producer;
     std::vector<VanadisInstruction*> fp_phys_reg_producer;
     std::vector<size_t> renamed_in_rob;
+    // rename_at_dispatch with more than one hardware thread: renamed system calls that have not retired, per thread.
+    // A thread renames nothing younger than such a call, so a thread that waits in a system call (a read of an empty
+    // pipe, epoll_pwait, a sleep) holds no physical register and no issue-queue entry the other threads need; a system
+    // call is an exception, and a core dispatches nothing younger than it until it returns.
+    std::vector<uint32_t> renamed_syscalls;
     // rename_at_dispatch: the program order of memory operations; the load that read before an older store knew its
     // address, whose instruction is fetched again when it reaches the front of the reorder buffer; and the loads that
     // did this, which wait for older stores from then on, until the table is cleared.
