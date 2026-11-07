@@ -416,7 +416,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
         if ( timeline_trace_file_ == nullptr ) { output->fatal(CALL_INFO, -1, "Failed to open the timeline trace file.\n"); }
         timeline_trace_start_cycle_ = params.find<uint64_t>("timeline_trace_start_cycle", 0);
         timeline_trace_left_ = params.find<uint64_t>("timeline_trace_micro_ops", 100000);
-        fprintf(timeline_trace_file_, "# R sequence address decode rename issue executed retire code; S cycle sequence-of-branch address\n");
+        fprintf(timeline_trace_file_, "# R sequence address decode rename issue executed retire code producer-sequences...; S cycle sequence-of-branch address\n");
     }
 
     pause_on_retire_address = params.find<uint64_t>("pause_when_retire_address", 0);
@@ -614,6 +614,17 @@ VanadisCore::performRename(const uint32_t hw_thr)
         assignRegistersToInstruction(
             thread_decoders[hw_thr]->countISAIntReg(), thread_decoders[hw_thr]->countISAFPReg(), ins, int_register_stack,
             fp_register_stack, issue_isa_tables[hw_thr]);
+        if ( timeline_trace_file_ != nullptr ) {
+            ins->trace_producer_count_ = 0;
+            for ( uint16_t k = 0; k < ins->countISAIntRegIn() && ins->trace_producer_count_ < VanadisInstruction::TRACE_PRODUCERS; ++k ) {
+                const VanadisInstruction* p = int_phys_reg_producer[ins->getPhysIntRegIn(k)];
+                if ( nullptr != p && p != ins ) ins->trace_producer_[ins->trace_producer_count_++] = p->getProgramSequence();
+            }
+            for ( uint16_t k = 0; k < ins->countISAFPRegIn() && ins->trace_producer_count_ < VanadisInstruction::TRACE_PRODUCERS; ++k ) {
+                const VanadisInstruction* p = fp_phys_reg_producer[ins->getPhysFPRegIn(k)];
+                if ( nullptr != p && p != ins ) ins->trace_producer_[ins->trace_producer_count_++] = p->getProgramSequence();
+            }
+        }
         ins->setProgramSequence(next_program_sequence[hw_thr]++);
         ins->setRenameCycle(issue_stage_cycle);
         if ( nullptr != ins->getTiming() && ins->getTiming()->accumulator_alternate ) {
@@ -1347,10 +1358,12 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
                 fprintf(pipeline_trace_file_, "0x%08" PRI_ADDR " %s\n", rob_front->getInstructionAddress(), rob_front->getInstCode());
             }
             if ( timeline_trace_file_ != nullptr && timeline_trace_left_ > 0 && cycle >= timeline_trace_start_cycle_ ) {
-                fprintf(timeline_trace_file_, "R %" PRIu64 " 0x%" PRI_ADDR " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %s\n",
+                fprintf(timeline_trace_file_, "R %" PRIu64 " 0x%" PRI_ADDR " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %s",
                     rob_front->getProgramSequence(), rob_front->getInstructionAddress(), rob_front->getDecodeCycle(),
                     rob_front->getRenameCycle(), rob_front->getIssueCycle(), rob_front->getExecutedCycle(), (uint64_t)cycle,
                     rob_front->getInstCode());
+                for ( uint8_t k = 0; k < rob_front->trace_producer_count_; ++k ) fprintf(timeline_trace_file_, " %" PRIu64, rob_front->trace_producer_[k]);
+                fprintf(timeline_trace_file_, "\n");
                 timeline_trace_left_--;
             }
 

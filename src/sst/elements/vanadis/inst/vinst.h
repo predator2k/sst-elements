@@ -508,6 +508,10 @@ class VanadisInstruction
         // predicate leaves to it, and the core counts it neither against the rename width nor against the queue of the LSQ.
         void markElementCompanion() { element_companion_ = true; }
         bool isElementCompanion() const { return element_companion_; }
+        // For the timeline trace: the program sequences of the micro-ops that produced the inputs, recorded at rename.
+        static constexpr int TRACE_PRODUCERS = 6;
+        uint64_t trace_producer_[TRACE_PRODUCERS] = {};
+        uint8_t  trace_producer_count_ = 0;
         // With rename_at_dispatch the program order of every micro-op, from 1: a flush at a branch removes the larger ones.
         void setProgramSequence(const uint64_t sequence) { program_sequence_ = sequence; }
         uint64_t getProgramSequence() const { return program_sequence_; }
