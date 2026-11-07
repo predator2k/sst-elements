@@ -83,6 +83,8 @@ private:
     uint64_t line_bytes_ = 64;
     uint64_t lines_per_page_ = 64;
     int64_t degree_ = 4;
+    // train_on_writes: writes train the streams and issue prefetches.
+    bool train_on_writes_ = true;
     uint64_t use_clock_ = 0;
 
     Statistic<uint64_t>* stat_prefetches_ = nullptr;
