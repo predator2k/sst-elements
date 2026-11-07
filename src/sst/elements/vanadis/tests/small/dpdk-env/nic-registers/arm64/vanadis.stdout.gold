@@ -1,0 +1,10 @@
+open the device file                         ok
+mmap the register window                     ok
+STATUS.LU is set                             ok
+MAC 02:00:00:00:00:01, RAH0.AV 1
+RDBAL reads back                             ok
+RDBAH reads back                             ok
+RDLEN reads back                             ok
+RDT reads back                               ok
+RDH is 0                                     ok
+done

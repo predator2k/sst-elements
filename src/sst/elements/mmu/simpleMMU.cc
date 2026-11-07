@@ -142,7 +142,10 @@ void SimpleMMU::flushTlb( uint32_t core, uint32_t hw_thread ) {
 #endif
     sendEvent( getLink(core,"dtlb"), new TlbFlushReqEvent( hw_thread ) );
     if ( nic_tlb_link_ ) {
-        nic_tlb_link_->send(new TlbFlushReqEvent( hw_thread ) );
+        // The NIC TLB translates for the process of core 0, hardware thread 0 (handleNicTlbEvent) and has entries for
+        // one hardware thread; a change of the mappings by any thread of the process flushes them (upstream sent the
+        // thread's index, which is outside the NIC TLB's table for a thread other than 0).
+        nic_tlb_link_->send(new TlbFlushReqEvent( 0 ) );
     }
 }
 
