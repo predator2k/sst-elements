@@ -25,6 +25,7 @@
 #include "util/vsignx.h"
 #include "inst/vstorecond.h"
 
+#include <algorithm>
 #include <cassert>
 #include <iterator>
 #include <cinttypes>
@@ -61,6 +62,9 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         { "stores_per_cycle", "Stores that can go to memory per cycle.", "1"},
         { "store_forward_cycles", "Cycles from the issue of a load to its data when an older store holds all of its bytes. 0 makes the load wait until the store has gone to memory.", "0"},
         { "fp_load_extra_cycles", "Cycles a load into a floating-point or vector register takes above a load into an integer register", "0"},
+        { "load_line_window", "Cache lines of the most recent loads that a load reaches without taking a new-line slot of the cycle.", "0"},
+        { "load_new_lines_per_cycle", "Loads per cycle that reach a cache line outside load_line_window. 0 is no limit.", "0"},
+        { "store_lines_per_cycle", "Cache lines the stores that go to memory in one cycle may write; a store that straddles two lines may still go first in a cycle. 0 is no limit.", "0"},
                 #ifdef VANADIS_BUILD_DEBUG
                 { "address_mask", "Can mask off address bits if needed during construction of a operation for debug", "0xFFFFFFFFFFFFFFFF"}
                 #endif
@@ -89,7 +93,10 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             max_issue_attempts_per_cycle_(params.find("issues_per_cycle", 2)),
             stores_per_cycle_(params.find<uint32_t>("stores_per_cycle", 1)),
             store_forward_cycles_(params.find<uint64_t>("store_forward_cycles", 0)),
-            fp_load_extra_cycles_(params.find<uint64_t>("fp_load_extra_cycles", 0))
+            fp_load_extra_cycles_(params.find<uint64_t>("fp_load_extra_cycles", 0)),
+            load_line_window_(params.find<uint32_t>("load_line_window", 0)),
+            load_new_lines_per_cycle_(params.find<uint32_t>("load_new_lines_per_cycle", 0)),
+            store_lines_per_cycle_(params.find<uint32_t>("store_lines_per_cycle", 0))
         {
             std_mem_handlers_ = new VanadisBasicLoadStoreQueue::StandardMemHandlers(this, output_);
 
@@ -370,17 +377,88 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             }
             // A store that took more ports than were left takes them from the next cycle.
             stores_this_cycle_ = stores_this_cycle_ > stores_per_cycle_ ? stores_this_cycle_ - stores_per_cycle_ : 0;
+            store_lines_this_cycle_.clear();
         }
 
         void commitFrontStore(const uint32_t thread) override
         {
             if (stores_this_cycle_ >= stores_per_cycle_ || stores_pending_[thread].empty()) return;
             VanadisBasicStorePendingEntry* front = stores_pending_[thread].front();
+            if (! storeLinesAvailable(front)) return;
             uint32_t ports = 1;
             if (front->getStoreInstruction()->takesAllStorePorts()) ports = stores_per_cycle_;
             else if (operationStraddlesCacheLine(front->getStoreAddress(), front->getStoreWidth())) ports = 2;
             else if (front->getStoreInstruction()->sharesStorePort()) ports = 0;
-            if (issueStoreFront(thread)) stores_this_cycle_ += ports;
+            if (issueStoreFront(thread)) {
+                stores_this_cycle_ += ports;
+                noteStoreLines(front);
+            }
+        }
+
+        /*
+         * Whether the store at the front may go to memory in this cycle under store_lines_per_cycle.
+         * Handling: true without the limit, when no store went in this cycle, or when every line of the store is one the
+         * stores of this cycle already write; otherwise true only while the cycle has fewer lines than the limit.
+         * Emits nothing.
+         */
+        bool storeLinesAvailable(VanadisBasicStorePendingEntry* store) const
+        {
+            if (store_lines_per_cycle_ == 0 || store_lines_this_cycle_.empty()) return true;
+            const uint64_t width = store->getStoreWidth() > 0 ? store->getStoreWidth() : 1;
+            const uint64_t first = store->getStoreAddress() / cache_line_width_;
+            const uint64_t last = (store->getStoreAddress() + width - 1) / cache_line_width_;
+            size_t fresh = 0;
+            for (uint64_t line = first; line <= last; ++line) {
+                if (std::find(store_lines_this_cycle_.begin(), store_lines_this_cycle_.end(), line) == store_lines_this_cycle_.end()) fresh++;
+            }
+            return fresh == 0 || store_lines_this_cycle_.size() + fresh <= store_lines_per_cycle_;
+        }
+
+        /*
+         * Records the lines a store that went to memory writes in this cycle.
+         * Handling: adds each line of the store not yet in the set of the cycle. Emits nothing.
+         */
+        void noteStoreLines(VanadisBasicStorePendingEntry* store)
+        {
+            if (store_lines_per_cycle_ == 0) return;
+            const uint64_t width = store->getStoreWidth() > 0 ? store->getStoreWidth() : 1;
+            const uint64_t first = store->getStoreAddress() / cache_line_width_;
+            const uint64_t last = (store->getStoreAddress() + width - 1) / cache_line_width_;
+            for (uint64_t line = first; line <= last; ++line) {
+                if (std::find(store_lines_this_cycle_.begin(), store_lines_this_cycle_.end(), line) == store_lines_this_cycle_.end()) {
+                    store_lines_this_cycle_.push_back(line);
+                }
+            }
+        }
+
+        /*
+         * Whether a load may reach memory in this cycle under load_new_lines_per_cycle, and if so records its lines.
+         * Handling: a line among the load_line_window most recent load lines takes no slot; the other lines take one
+         * new-line slot each. The first load with new lines in a cycle always goes. Emits nothing.
+         */
+        bool takeLoadLines(uint64_t address, uint64_t width)
+        {
+            if (load_new_lines_per_cycle_ == 0) return true;
+            if (load_lines_cycle_ != current_cycle_) {
+                load_lines_cycle_ = current_cycle_;
+                new_load_lines_this_cycle_ = 0;
+            }
+            if (width == 0) width = 1;
+            const uint64_t first = address / cache_line_width_;
+            const uint64_t last = (address + width - 1) / cache_line_width_;
+            uint32_t fresh = 0;
+            for (uint64_t line = first; line <= last; ++line) {
+                if (std::find(recent_load_lines_.begin(), recent_load_lines_.end(), line) == recent_load_lines_.end()) fresh++;
+            }
+            if (fresh > 0 && new_load_lines_this_cycle_ > 0 && new_load_lines_this_cycle_ + fresh > load_new_lines_per_cycle_) return false;
+            new_load_lines_this_cycle_ += fresh;
+            for (uint64_t line = first; line <= last; ++line) {
+                auto found = std::find(recent_load_lines_.begin(), recent_load_lines_.end(), line);
+                if (found != recent_load_lines_.end()) recent_load_lines_.erase(found);
+                recent_load_lines_.push_front(line);
+                while (recent_load_lines_.size() > load_line_window_) recent_load_lines_.pop_back();
+            }
+            return true;
         }
 
     protected:
@@ -1544,6 +1622,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 {
                     // We are good to issue with all checks completed!
                     // issueLoad(load_ins, load_address, load_width);
+                    // A load to a line outside the recent ones waits for a new-line slot of a later cycle.
+                    if ( ! takeLoadLines(load_address, load_width) ) return false;
                     #ifdef VANADIS_BUILD_DEBUG
                     output_->verbose(CALL_INFO, 16, VANADIS_DBG_LSQ_LOAD_FLG, "--> issue LOAD possible sw_thr=%d\n", sw_thr);
                     #endif
@@ -1757,6 +1837,16 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         std::deque<ForwardedLoad> delayed_fp_loads_;
         bool handling_in_tick_ = false;
         std::set<StandardMem::Request::id_t> delayed_ids_;
+        // load_line_window and load_new_lines_per_cycle: the most recent load lines, newest first, and the new-line slots
+        // that the loads of load_lines_cycle_ took.
+        const uint32_t load_line_window_;
+        const uint32_t load_new_lines_per_cycle_;
+        std::deque<uint64_t> recent_load_lines_;
+        uint32_t new_load_lines_this_cycle_ = 0;
+        uint64_t load_lines_cycle_ = UINT64_MAX;
+        // store_lines_per_cycle and the lines the stores of this cycle write.
+        const uint32_t store_lines_per_cycle_;
+        std::vector<uint64_t> store_lines_this_cycle_;
 
         // Loads that wait for an older store.
         std::deque<VanadisLoadInstruction*> parked_loads_;
