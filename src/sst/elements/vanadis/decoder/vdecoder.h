@@ -240,6 +240,13 @@ public:
 
     virtual void setThreadROB(VanadisCircularQueue<VanadisInstruction*>* thr_rob) { thread_rob = thr_rob; }
 
+    // The instructions in the reorder buffer, counted by their last micro-op, against a limit in instructions; 0 is no
+    // limit, and only the micro-op slots of the buffer count.
+    void setROBInstructionLimit(const uint32_t limit) { rob_instruction_limit_ = limit; }
+    bool robInstructionsFull() const { return rob_instruction_limit_ > 0 && rob_instructions_ >= rob_instruction_limit_; }
+    void noteROBInstructionsLeft(const uint32_t count) { rob_instructions_ = rob_instructions_ >= count ? rob_instructions_ - count : 0; }
+    void clearROBInstructions() { rob_instructions_ = 0; }
+
     void     setCore(const uint32_t num ) { core = num; }
     uint32_t getCore() const { return core; }
 
@@ -264,6 +271,8 @@ protected:
 
     bool                                       wantDelegatedLoad;
     VanadisCircularQueue<VanadisInstruction*>* thread_rob;
+    uint32_t rob_instruction_limit_ = 0;
+    uint32_t rob_instructions_ = 0;
 
     // VanadisCircularQueue<VanadisInstruction*>* decoded_q;
 

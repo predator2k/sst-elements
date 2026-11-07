@@ -114,6 +114,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     renamed_in_rob.assign(hw_threads, 0);
     misprediction_extra_cycles = params.find<uint64_t>("misprediction_extra_cycles", 0);
     recover_at_execute = params.find<bool>("recover_at_execute", false);
+    rob_instruction_limit = params.find<uint32_t>("reorder_instructions", 0);
     unresolved_branches.resize(hw_threads);
     next_program_sequence.assign(hw_threads, 1);
     decode_resume_cycle.assign(hw_threads, 0);
@@ -221,6 +222,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
             thread_decoders[i]->countISAFPReg()));
 
         thread_decoders[i]->setThreadROB(rob[i]);
+        thread_decoders[i]->setROBInstructionLimit(params.find<uint32_t>("reorder_instructions", 0));
 
         // Reserve ISA registers
         for ( uint16_t j = 0; j < thread_decoders[i]->countISAIntReg(); ++j ) {
@@ -1256,6 +1258,7 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
         if ( perform_cleanup )
         {
             if ( rename_at_dispatch ) last_retired_address[rob_num] = rob->peek()->getInstructionAddress();
+            if ( rob->peek()->endsMicroOpGroup() ) thr_decoder->noteROBInstructionsLeft(1);
             rob->pop();
             if ( rename_at_dispatch ) renamed_in_rob[rob_num]--;
 
@@ -2476,7 +2479,12 @@ VanadisCore::squashYounger(const uint64_t cycle, const uint32_t thr, VanadisSpec
         if ( has_order_violation[thr] && violating_load_sequence[thr] >= first_memory ) has_order_violation[thr] = 0;
     }
     thr_rob->popBack(squashed.size());
-    for ( VanadisInstruction* ins : squashed ) delete ins;
+    uint32_t squashed_instructions = 0;
+    for ( VanadisInstruction* ins : squashed ) {
+        if ( ins->endsMicroOpGroup() ) squashed_instructions++;
+        delete ins;
+    }
+    thread_decoders[thr]->noteROBInstructionsLeft(squashed_instructions);
     renamed_in_rob[thr] = thr_rob->size();
 
     // The rename table maps what the retired state and the instructions that stay map.
@@ -2568,6 +2576,7 @@ VanadisCore::clearROBMisspeculate(const uint32_t hw_thr)
     // clear the ROB entries and reset
     thr_rob->clear();
     renamed_in_rob[hw_thr] = 0;
+    thread_decoders[hw_thr]->clearROBInstructions();
 }
 
 void

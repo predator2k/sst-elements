@@ -219,7 +219,7 @@ public:
                 const uint64_t window = ip / fetch_window_bytes;
                 const bool new_block = window != block_window_ || block_ended_by_taken_;
                 if ( fetch_blocks_per_cycle > 0 && new_block && blocks_this_cycle_ >= fetch_blocks_per_cycle ) return false;
-                if ( bundle->getInstructionCount() < (thread_rob->capacity() - thread_rob->size()) ) {
+                if ( bundle->getInstructionCount() < (thread_rob->capacity() - thread_rob->size()) && ! robInstructionsFull() ) {
                     if ( new_block ) {
                         blocks_this_cycle_++;
                         block_window_ = window;
@@ -246,8 +246,12 @@ public:
                             ip                = predicted_address;
                             bundle_has_branch = true;
                         }
-                        thread_rob->push(next_ins->clone());
+                        VanadisInstruction* pushed = next_ins->clone();
+                        // The last micro-op of the instruction stands for it in the instruction count of the buffer.
+                        if ( i + 1 == bundle->getInstructionCount() ) pushed->markEndOfMicroOpGroup();
+                        thread_rob->push(pushed);
                     }
+                    if ( rob_instruction_limit_ > 0 ) rob_instructions_++;
                     ip      = bundle_has_branch ? ip : ip + bundle->pcIncrement();
                     success = true;
                 }
