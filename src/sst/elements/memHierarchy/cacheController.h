@@ -82,7 +82,6 @@ public:
             {"snoop_l1_invalidations",  "(bool) Forward invalidations from L1s to processors. Options: 0[off], 1[on]", "false"},
             {"llsc_block_cycles",       "(uint64_t) Number of cycles to prevent competing access to an LL/LR line. Encourages forward progress", "0"},
             {"streaming_writes",        "(bool) MESI L1: a write miss whose two lines below were write misses, the lower one written in whole, is a streaming write: its response takes no data bandwidth of the response links (response_link_width) on the way up; the data still moves", "false"},
-            {"streaming_write_on_retry", "(bool) MESI L1 with streaming_writes: a write miss is checked for streaming the first time it goes on to the next level, also when it waited in the MSHR before (for example behind the eviction of its victim); false checks only a miss that goes on when it arrives", "false"},
             {"pipelined_read_hits",     "(bool) MESI L1: a read hit leaves the line free for the next access in the next cycle instead of holding it until its response leaves; values do not change, only when responses leave", "false"},
             {"debug",                   "(uint) Where to send output. Options: 0[no output], 1[stdout], 2[stderr], 3[file]", "0"},
             {"debug_level",             "(uint) Debugging level: 0 to 10. Must configure sst-core with '--enable-debug'. 1=info, 2-10=debug output", "0"},
