@@ -117,6 +117,9 @@ public:
                                         "address is retired, set verbose to 0", ""},
         { "pause_when_retire_address", "If specified, the simulation will stop when this address is retired.", "0"},
         { "pipeline_trace_file", "If specified, a trace of the pipeline activity will be generated to this file.", ""},
+        { "timeline_trace_file", "If specified, one line per retired micro-op with the cycles it entered the reorder buffer, was renamed, issued, executed and retired, and one line per misprediction recovery; empty is no trace", ""},
+        { "timeline_trace_start_cycle", "Cycle from which the timeline trace records", "0"},
+        { "timeline_trace_micro_ops", "Retired micro-ops the timeline trace records before it stops", "100000"},
         { "max_cycle", "Maximum number of cycles to execute. The core will halt after this many cycles." , "std::numeric_limits<uint64_t>::max()"},
         { "node_id", "Identifier for the node this core belongs to. Each node in the system needs a unique ID between 0 and (number of nodes) - 1. Used to tag output.", "0"},
         { "core_id", "Identifier for this core. Each core in the system needs a unique ID between 0 and (number of cores) - 1.", 0 },
@@ -404,6 +407,10 @@ private:
     char*    inst_print_buffer_ = nullptr;
     #endif
     FILE*    pipeline_trace_file_ = nullptr;
+    // The timeline trace (timeline_trace_file): the file, the first cycle it records and the micro-ops left to record.
+    FILE*    timeline_trace_file_ = nullptr;
+    uint64_t timeline_trace_start_cycle_ = 0;
+    uint64_t timeline_trace_left_ = 0;
 
     uint64_t dCacheLineWidth;
     uint64_t iCacheLineWidth;

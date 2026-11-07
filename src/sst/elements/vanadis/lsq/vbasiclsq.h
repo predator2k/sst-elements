@@ -743,6 +743,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
 
                         load_ins->finishLoad(lsq_->register_files_->at(load_entry->getHWThread()));
                         load_ins->markExecuted();
+                        load_ins->setExecutedCycle(current_cycle_);
                         lsq_->stat_loads_executed_->addData(1);
                         lsq_->loads_pending_.erase(load_itr);
                         delete load_entry;
@@ -1167,6 +1168,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             //with virtual memory we shouldn't need this but until we are sure we will leave it here
             if ( load_address + load_width < load_address || (load_address + load_width) & ~address_mask_) {
                 load_ins->markExecuted();
+                load_ins->setExecutedCycle(current_cycle_);
                 return;
             }
             #endif
@@ -1559,6 +1561,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             if ( load_width == 0 ) {
                 load_ins->finishLoad(hw_thr_reg);
                 load_ins->markExecuted();
+                load_ins->setExecutedCycle(current_cycle_);
                 return true;
             }
 
