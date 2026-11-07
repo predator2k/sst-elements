@@ -366,9 +366,9 @@ bool MESIL1::handleGetX(MemEvent* event, bool in_mshr) {
     if (in_mshr)
         mshr_->removePendingRetry(addr);
 
-    // streaming_write_on_retry: the bytes of a write to one of the last write-miss lines count when the write arrives,
-    // also while the line still waits for its data.
-    if (streaming_writes_ && streaming_write_on_retry_ && !in_mshr)
+    // streaming_write_on_retry: the bytes of a write to one of the last write-miss lines count when the write arrives or is
+    // retried (a second request to a line in one cache cycle is retried), also while the line still waits for its data.
+    if (streaming_writes_ && streaming_write_on_retry_)
         noteWrittenBytes(addr, event->getAddr() - event->getBaseAddr(), event->getPayload().size());
 
     // Any event other than an unlock or store-conditional needs to stall for a cache flush
