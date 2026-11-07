@@ -40,6 +40,7 @@ MESIL1::MESIL1(ComponentId_t id, Params& params, Params& owner_params, bool pref
     llsc_block_cycles_ = params.find<Cycle_t>("llsc_block_cycles", 0);
     pipelined_read_hits_ = params.find<bool>("pipelined_read_hits", false);
     streaming_writes_ = params.find<bool>("streaming_writes", false);
+    streaming_write_on_arrival_ = params.find<bool>("streaming_write_on_arrival", false);
 
     std::string frequency = params.find<std::string>("cache_frequency", "");
 
@@ -364,6 +365,11 @@ bool MESIL1::handleGetX(MemEvent* event, bool in_mshr) {
     if (in_mshr)
         mshr_->removePendingRetry(addr);
 
+    // streaming_write_on_arrival: the bytes of a write to one of the last write-miss lines count when the write arrives,
+    // also while the line waits for its data, so a stream of writes that keeps several misses in flight is seen as one.
+    if (streaming_writes_ && streaming_write_on_arrival_ && !in_mshr)
+        noteWrittenBytes(addr, event->getAddr() - event->getBaseAddr(), event->getPayload().size());
+
     // Any event other than an unlock or store-conditional needs to stall for a cache flush
     if (is_flushing_ && !in_mshr && !event->isStoreConditional() && !event->queryFlag(MemEvent::F_LOCKED)) {
         event_debuginfo_.action = "Reject";
@@ -419,6 +425,7 @@ bool MESIL1::handleGetX(MemEvent* event, bool in_mshr) {
                     if (below && full) event->setFlag(MemEvent::F_STREAMWRITE);
                     if (write_miss_lines_.size() >= STREAM_LINES) write_miss_lines_.erase(write_miss_lines_.begin());
                     write_miss_lines_.emplace_back(addr, 0);
+                    if (streaming_write_on_arrival_) noteWrittenBytes(addr, event->getAddr() - event->getBaseAddr(), event->getPayload().size());
                 }
                 send_time = forwardMessage(event, line_size_, 0, nullptr, Command::GetX);
                 line->setState(IM);
@@ -2164,6 +2171,7 @@ void MESIL1::serialize_order(SST::Core::Serialization::serializer& ser) {
     SST_SER(llsc_block_cycles_);
     SST_SER(pipelined_read_hits_);
     SST_SER(streaming_writes_);
+    SST_SER(streaming_write_on_arrival_);
     SST_SER(write_miss_lines_);
     SST_SER(llsc_timeout_);
     SST_SER(cache_array_);
