@@ -329,11 +329,13 @@ uint64_t AppRuntimeMemory<Type>::configureStack(  Output* output, int page_size,
     vanadis_vec_copy_in<Type>(aux_data_block, VANADIS_AT_FLAGS);
     vanadis_vec_copy_in<Type>(aux_data_block, 0);
 
-    // AT_HWCAP and AT_HWCAP2: the ISA features the OS reports. A configuration without them gets neither entry, so
-    // the C library of the other instruction sets walks the auxiliary vector of upstream and retires the same count.
-    if ( hwcap_ != 0 || hwcap2_ != 0 ) {
-        vanadis_vec_copy_in<Type>(aux_data_block, VANADIS_AT_HWCAP);
-        vanadis_vec_copy_in<Type>(aux_data_block, static_cast<Type>(hwcap_));
+    // AT_HWCAP: the ISA features the OS reports, 0 unless the configuration gives them, as upstream writes it.
+    vanadis_vec_copy_in<Type>(aux_data_block, VANADIS_AT_HWCAP);
+    vanadis_vec_copy_in<Type>(aux_data_block, static_cast<Type>(hwcap_));
+
+    // AT_HWCAP2 only when the configuration gives it, so the C library of the other instruction sets walks the auxiliary
+    // vector of upstream and retires the same count.
+    if ( hwcap2_ != 0 ) {
         vanadis_vec_copy_in<Type>(aux_data_block, VANADIS_AT_HWCAP2);
         vanadis_vec_copy_in<Type>(aux_data_block, static_cast<Type>(hwcap2_));
     }
