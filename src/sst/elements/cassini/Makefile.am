@@ -15,6 +15,8 @@ libcassini_la_SOURCES = \
 	palaprefetch.cc \
 	nbprefetch.cc \
 	nbprefetch.h \
+	streamprefetch.cc \
+	streamprefetch.h \
 	pageentry.h \
 	pageentry.cc \
 	addrHistogrammer.cc \
