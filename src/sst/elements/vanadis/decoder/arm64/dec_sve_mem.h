@@ -81,7 +81,7 @@ VanadisARM64Decoder::sveContigLoad(uint64_t addr, VanadisInstructionBundle* bund
             std::vector<uint16_t> in { pg, A64Reg::VT0 };
             if ( c != 0 ) in.insert(in.end(), zs.begin(), zs.end());
             auto* i = op(bundle, addr, "SVE.MERGE", INST_FP_ARITH, contigMerge, {}, {}, in, zs);
-            tc(i, A64Tc::INT_INTERNAL);
+            tc(i, sveStructMergeClass(nreg));
             i->a = dt.log2_ebytes;
             i->b = dt.mbytes;
             i->c = nreg;
@@ -89,6 +89,7 @@ VanadisARM64Decoder::sveContigLoad(uint64_t addr, VanadisInstructionBundle* bund
             i->imm = c;
             i->imm2 = length;
         }
+        if ( nreg > 1 ) occupyStructPermute(bundle, addr, { A64Reg::VT0 }, nreg - 1);
         return;
     }
     // T0 = the base address; T3 is the first-fault chain.
@@ -147,10 +148,11 @@ VanadisARM64Decoder::sveContigStore(uint64_t addr, VanadisInstructionBundle* bun
         for ( uint32_t r = 0; r < nreg; ++r ) zs.push_back(static_cast<uint16_t>((zt + r) % 32));
         for ( uint32_t k = 0; k * vector_bytes < image; ++k ) out.push_back(temps[k]);
         auto* i = op(bundle, addr, "SVE.PACK", INST_FP_ARITH, contigPack, {}, {}, zs, out);
-        tc(i, A64Tc::INT_INTERNAL);
+        tc(i, sveStructMergeClass(nreg));
         i->a = log2_ebytes;
         i->b = mbytes;
         i->c = nreg;
+        if ( nreg > 1 ) occupyStructPermute(bundle, addr, zs, nreg - 1);
     }
     for ( uint32_t c = 0; c < image; c += chunk ) {
         const uint32_t chunk_end = image - c < chunk ? image : c + chunk;

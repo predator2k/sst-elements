@@ -134,6 +134,8 @@ public:
         { "fp_queue_entries", "With rename_at_dispatch, renamed micro-ops of the floating-point and FP divide units that wait to issue; 0 is no limit", "0"},
         { "reorder_instructions", "Instructions the reorder buffer holds, counted once whatever their micro-ops; 0 counts only the micro-op slots (reorder_slots)", "0"},
         { "recover_at_execute", "With rename_at_dispatch, a mispredicted branch squashes the younger instructions when it executes, and the older ones go on; false squashes at retire", "false"},
+        { "retire_instructions_per_cycle", "Instructions (micro-op groups) retired per cycle; the micro-ops of a group do not count against retires_per_cycle. 0 counts micro-ops against retires_per_cycle as upstream", "0"},
+        { "stores_pass_loads", "With rename_at_dispatch, a plain store issues to the load-store queue ahead of older plain loads that have not issued, when the store buffer has room for it; false waits for every older memory operation", "false"},
         { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },
         { "physical_fp_registers", "Number of physical floating point registers per hardware thread", "128" },
@@ -364,6 +366,12 @@ private:
     // recover_at_execute: the branches of each thread that have issued and are not resolved yet, and the next program
     // sequence number.
     bool recover_at_execute = false;
+    // retire_instructions_per_cycle: instructions retired per cycle, 0 for micro-ops; whether the last retired micro-op ended
+    // its group.
+    uint32_t retire_instructions_per_cycle = 0;
+    bool retired_group_end_ = false;
+    // stores_pass_loads: plain stores issue ahead of older plain loads.
+    bool stores_pass_loads = false;
     uint32_t rob_instruction_limit = 0;
     // The issue queues of the integer and the floating-point units: their sizes and the renamed micro-ops waiting in them.
     enum IssueQueue : uint8_t { QUEUE_NONE = 0, QUEUE_INTEGER = 1, QUEUE_FP = 2 };

@@ -60,7 +60,7 @@ struct A64SveDtype;
     X(V_ALU, "v_alu") X(V_MISC, "v_misc") X(V_SHIFT, "v_shift") X(V_SHIFT_COMPLEX, "v_shift_complex")                     \
     X(V_SAT_NARROW, "v_sat_narrow") X(V_ACCUMULATE, "v_accumulate") X(V_REDUCE_S, "v_reduce_s") X(V_REDUCE_H, "v_reduce_h") \
     X(V_REDUCE_B, "v_reduce_b") X(V_MUL, "v_mul") X(V_MLA, "v_mla") X(V_DOT, "v_dot") X(V_MMLA, "v_mmla") X(V_PMULL, "v_pmull") \
-    X(V_TBL_LONG, "v_tbl_long") X(V_STRUCT_PERMUTE, "v_struct_permute")                                                   \
+    X(V_TBL_LONG, "v_tbl_long") X(V_STRUCT_PERMUTE, "v_struct_permute") X(V_STORE_DATA, "v_store_data")                    \
     X(CRYPTO_AES, "crypto_aes") X(CRYPTO_AES_MIX, "crypto_aes_mix") X(CRYPTO_SHA_FAST, "crypto_sha_fast") X(CRYPTO_SHA_SLOW, "crypto_sha_slow")               \
     X(CRYPTO_SHA3, "crypto_sha3") X(BF_DOT, "bf_dot") X(BF_MMLA, "bf_mmla") X(BF_CVT, "bf_cvt")                            \
     X(Z_CMP, "z_cmp") X(Z_DUP_GP, "z_dup_gp") X(Z_CPY_GP, "z_cpy_gp") X(Z_INDEX_IMM, "z_index_imm")                       \
@@ -118,6 +118,8 @@ public:
         { "entry_point", "Starting instruction pointer; 0 falls back to the core's ELF reader", "0" },
         { "vector_bytes", "SVE vector length in bytes: a multiple of 16 from 16 to 256; 16 with no SVE", "16" },
         { "dczid_block_bytes", "Block size DC ZVA zeroes and DCZID_EL0 reports, bytes (a power of two)", "64" },
+        { "structure_permute_micro_ops", "With a timing table, a load or store of N-element structures (ASIMD LD2 to LD4, ST2 to ST4; SVE LD2 to LD4, ST2 to ST4) has N permute micro-ops of class v_struct_permute in the vector pipes, the merge of an SVE structure load among them; false is one permute micro-op for ASIMD and an SVE merge of class int_internal", "false" },
+        { "vector_store_data_micro_ops", "With a timing table, a store of vector registers has a store-data micro-op of class v_store_data that reads the first stored register and writes nothing, so it takes a vector pipe; false is none", "false" },
         { "counter_hz", "Frequency CNTFRQ_EL0 reports and CNTVCT_EL0 counts at, Hz", "1000000000" },
         { "integer_mul_extra_cycles", "Cycles a scalar integer multiply takes above the latency of the integer unit", "0" },
         { "fp_mul_extra_cycles", "Cycles a floating-point multiply takes above the latency of the FP unit", "0" },
@@ -145,6 +147,8 @@ public:
                 vector_bytes);
         }
         dczid_block_bytes = params.find<uint32_t>("dczid_block_bytes", 64);
+        structure_permute_micro_ops_ = params.find<bool>("structure_permute_micro_ops", false);
+        vector_store_data_micro_ops_ = params.find<bool>("vector_store_data_micro_ops", false);
         counter_hz        = params.find<uint64_t>("counter_hz", 1000000000ull);
         integer_mul_extra_cycles = params.find<uint16_t>("integer_mul_extra_cycles", 0);
         fp_mul_extra_cycles      = params.find<uint16_t>("fp_mul_extra_cycles", 0);
@@ -319,6 +323,9 @@ protected:
     bool                         unimplemented_as_nop = false;
     uint32_t                     vector_bytes;
     uint32_t                     dczid_block_bytes;
+    // structure_permute_micro_ops and vector_store_data_micro_ops (the parameters).
+    bool                         structure_permute_micro_ops_ = false;
+    bool                         vector_store_data_micro_ops_ = false;
     uint64_t                     counter_hz;
     uint16_t                     integer_mul_extra_cycles;
     uint16_t                     fp_mul_extra_cycles;
@@ -643,6 +650,7 @@ protected:
             ok = decodeSve(addr, ins, bundle);
         }
         flushPending(bundle);
+        if ( ok && timing_given_ && vector_store_data_micro_ops_ ) addVectorStoreData(addr, bundle);
         if ( !ok && unimplemented_as_nop ) {
             output_->output("UNIMPLEMENTED 0x%08" PRIx32 " at 0x%" PRI_ADDR "\n", ins, addr);
             add(bundle, new VanadisNoOpInstruction(addr, hw_thr, options));
@@ -1117,6 +1125,12 @@ protected:
             o.setX(rf, 0, o.X(rf, 0) & ~o.imm);
         }, { rz(rt) }, { A64Reg::T0 }), A64Tc::INT_ALU);
         i->imm = dczid_block_bytes - 1;
+        // With a timing table the block is one store of zeros, which takes one store port and writes one line; without it,
+        // the upstream-style run of 8-byte stores.
+        if ( timing_given_ && dczid_block_bytes <= 64 ) {
+            add(bundle, new VanadisArm64ZeroStore(addr, hw_thr, options, A64Reg::T0, A64Reg::ZR, static_cast<uint16_t>(dczid_block_bytes)));
+            return true;
+        }
         for ( uint32_t off = 0; off < dczid_block_bytes; off += 8 ) {
             add(bundle, new VanadisStoreInstruction(addr, hw_thr, options, A64Reg::T0, off, A64Reg::ZR, 8,
                 MEM_TRANSACTION_NONE, STORE_INT_REGISTER));
@@ -1215,6 +1229,36 @@ protected:
         if ( ! timing_given_ ) return;
         VanadisLoadInstruction* load = dynamic_cast<VanadisLoadInstruction*>(bundle->getInstructionByIndex(bundle->getInstructionCount() - 1));
         if ( load != nullptr ) load->markSharesLoadPort();
+    }
+    // count micro-ops of class v_struct_permute that read fp_in and write nothing: the vector-pipe work of a structure load
+    // or store beyond the micro-op that moves the bytes (structure_permute_micro_ops).
+    void occupyStructPermute(VanadisInstructionBundle* bundle, uint64_t addr, const std::vector<uint16_t>& fp_in, uint32_t count)
+    {
+        if ( ! timing_given_ || ! structure_permute_micro_ops_ ) return;
+        for ( uint32_t k = 0; k < count; ++k ) {
+            tc(op(bundle, addr, "PERMUTE", INST_FP_ARITH, [](VanadisArm64Inst&, VanadisRegisterFile*) {}, {}, {}, fp_in, {}),
+                A64Tc::V_STRUCT_PERMUTE);
+        }
+    }
+    // The class of the merge micro-op of an SVE structure load of nreg registers.
+    A64Tc sveStructMergeClass(uint32_t nreg) const
+    {
+        return nreg > 1 && timing_given_ && structure_permute_micro_ops_ ? A64Tc::V_STRUCT_PERMUTE : A64Tc::INT_INTERNAL;
+    }
+    // vector_store_data_micro_ops: an instruction whose micro-ops store a vector register gets one store-data micro-op that
+    // reads the first such register and writes nothing (tables 3-14, 3-20 and 3-28 of the Cortex-X925 guide: store data in
+    // V01). Added after the instruction's micro-ops.
+    void addVectorStoreData(uint64_t addr, VanadisInstructionBundle* bundle)
+    {
+        for ( uint32_t i = 0; i < bundle->getInstructionCount(); ++i ) {
+            const VanadisStoreInstruction* s = dynamic_cast<const VanadisStoreInstruction*>(bundle->getInstructionByIndex(i));
+            if ( s == nullptr || STORE_FP_REGISTER != s->getValueRegisterType() || s->countISAFPRegIn() == 0 ) continue;
+            const uint16_t data = s->getISAFPRegIn(0);
+            tc(op(bundle, addr, "STDATA", INST_FP_ARITH, [](VanadisArm64Inst&, VanadisRegisterFile*) {}, {}, {}, { data }, {}),
+                A64Tc::V_STORE_DATA);
+            flushPending(bundle);
+            return;
+        }
     }
     // The last micro-op of the bundle, the second register of a store pair, goes to memory with the first in one store port.
     void sharePortWithPrevious(VanadisInstructionBundle* bundle)

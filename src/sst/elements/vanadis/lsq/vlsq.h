@@ -101,6 +101,9 @@ public:
     virtual bool storeFull() = 0;
     virtual bool loadFull() = 0;
     virtual bool storeBufferFull() = 0;
+    // Whether a store issued ahead of older loads finds a store-buffer entry when it reaches the front of the queue; true for
+    // a queue that does not hold stores back.
+    virtual bool storeBufferHasRoom(const uint32_t thread) { return true; }
 
     virtual size_t storeSize() = 0;
     virtual size_t loadSize() = 0;

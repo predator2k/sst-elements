@@ -114,6 +114,8 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     renamed_in_rob.assign(hw_threads, 0);
     misprediction_extra_cycles = params.find<uint64_t>("misprediction_extra_cycles", 0);
     recover_at_execute = params.find<bool>("recover_at_execute", false);
+    retire_instructions_per_cycle = params.find<uint32_t>("retire_instructions_per_cycle", 0);
+    stores_pass_loads = params.find<bool>("stores_pass_loads", false);
     rob_instruction_limit = params.find<uint32_t>("reorder_instructions", 0);
     queue_entries[QUEUE_INTEGER] = params.find<uint32_t>("integer_queue_entries", 0);
     queue_entries[QUEUE_FP] = params.find<uint32_t>("fp_queue_entries", 0);
@@ -745,6 +747,13 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
             order_allows = ! ( unallocated_memory_op_seen & UNISSUED_ORDERED )
                 && ! ( ( unallocated_memory_op_seen & UNISSUED_STORE ) && loadWaitsForStores(ins) );
         }
+        else if ( plain_store && stores_pass_loads ) {
+            // A store need not wait for older plain loads: it never gives them its bytes, and the load-store queue orders
+            // them by their memory sequence. It waits for older stores and ordered operations, and for a store-buffer
+            // entry, so it never stands in the queue ahead of an older load it would block.
+            order_allows = ! ( unallocated_memory_op_seen & ( UNISSUED_STORE | UNISSUED_ORDERED ) )
+                && ( ! ( unallocated_memory_op_seen & UNISSUED_LOAD ) || lsq->storeBufferHasRoom(hwThr) );
+        }
         else if ( memory_op ) {
             order_allows = 0 == unallocated_memory_op_seen;
         }
@@ -1310,7 +1319,8 @@ VanadisCore::performRetire(int rob_num, VanadisCircularQueue<VanadisInstruction*
         if ( perform_cleanup )
         {
             if ( rename_at_dispatch ) last_retired_address[rob_num] = rob->peek()->getInstructionAddress();
-            if ( rob->peek()->endsMicroOpGroup() ) thr_decoder->noteROBInstructionsLeft(1);
+            retired_group_end_ = rob->peek()->endsMicroOpGroup();
+            if ( retired_group_end_ ) thr_decoder->noteROBInstructionsLeft(1);
             rob->pop();
             if ( rename_at_dispatch ) renamed_in_rob[rob_num]--;
 
@@ -1780,7 +1790,11 @@ VanadisCore::tick(SST::Cycle_t cycle)
     {
     std::vector<int>  rc(hw_threads,0);
     auto cnt = hw_threads;
-    for ( uint32_t i = 0; i < retires_per_cycle; ++i ) {
+    // With retire_instructions_per_cycle the limit counts instructions: a retired micro-op that does not end its group takes
+    // no step of the loop, up to a bound of micro-ops per cycle.
+    const uint32_t retire_limit = retire_instructions_per_cycle > 0 ? retire_instructions_per_cycle : retires_per_cycle;
+    uint32_t micro_ops_left = retire_instructions_per_cycle > 0 ? 8 * retire_instructions_per_cycle : 0;
+    for ( uint32_t i = 0; i < retire_limit; ++i ) {
 
         // find an unblocked hardware thread
         while ( 1 == rc[m_curRetireHwThread] && cnt ) {
@@ -1792,7 +1806,12 @@ VanadisCore::tick(SST::Cycle_t cycle)
         // we found a unblocked hardware thread
         if ( cnt ) {
             auto thr = m_curRetireHwThread;
+            const uint64_t retired_before = ins_retired_this_cycle;
             rc[thr] = performRetire(thr, rob[thr], cycle);
+            if ( micro_ops_left > 0 && ins_retired_this_cycle > retired_before && ! retired_group_end_ ) {
+                micro_ops_left--;
+                i--;
+            }
             ++m_curRetireHwThread;
             m_curRetireHwThread %= (hw_threads);
             cnt = hw_threads;

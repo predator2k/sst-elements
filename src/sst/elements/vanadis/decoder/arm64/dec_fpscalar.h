@@ -280,12 +280,14 @@ VanadisARM64Decoder::decodeSimdStructure(uint64_t addr, uint32_t ins, VanadisIns
                 i->a = ebytes;
                 i->b = reg_bytes;
                 i->c = selem;
+                occupyStructPermute(bundle, addr, tl, selem - 1);
             }
             else {
                 auto* i = tc(op(bundle, addr, "ZIPN", INST_FP_ARITH, structInterleave, {}, {}, vl, tl), A64Tc::V_STRUCT_PERMUTE);
                 i->a = ebytes;
                 i->b = reg_bytes;
                 i->c = selem;
+                occupyStructPermute(bundle, addr, vl, selem - 1);
                 for ( uint32_t k = 0; k < selem; ++k ) storeFp(bundle, addr, base, k * reg_bytes, temps[k], reg_bytes);
             }
         }

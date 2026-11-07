@@ -166,6 +166,23 @@ protected:
     Resolver resolver;
 };
 
+// DC ZVA as one store: it writes zeros over the whole block at the aligned address in T0 and gives no bytes to a load,
+// which waits for it to reach the cache instead.
+class VanadisArm64ZeroStore : public VanadisStoreInstruction
+{
+public:
+    VanadisArm64ZeroStore(const uint64_t addr, const uint32_t hw_thr, const VanadisDecoderOptions* isa_opts, const uint16_t base,
+        const uint16_t zero_reg, const uint16_t block_bytes) :
+        VanadisInstruction(addr, hw_thr, isa_opts, 2, 0, 2, 0, 0, 0, 0, 0),
+        VanadisStoreInstruction(addr, hw_thr, isa_opts, base, 0, zero_reg, block_bytes, MEM_TRANSACTION_NONE, STORE_INT_REGISTER)
+    {}
+
+    VanadisArm64ZeroStore* clone() override { return new VanadisArm64ZeroStore(*this); }
+    const char*            getInstCode() const override { return "DCZVA"; }
+    bool                   zeroesData() const override { return true; }
+    bool                   forwardsDataToLoads() const override { return false; }
+};
+
 namespace A64SveMem {
 
 using namespace A64Sve;

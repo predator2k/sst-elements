@@ -65,6 +65,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         { "load_line_window", "Cache lines of the most recent loads that a load reaches without taking a new-line slot of the cycle.", "0"},
         { "load_new_lines_per_cycle", "Loads per cycle that reach a cache line outside load_line_window. 0 is no limit.", "0"},
         { "store_lines_per_cycle", "Cache lines the stores that go to memory in one cycle may write; a store that straddles two lines may still go first in a cycle. 0 is no limit.", "0"},
+        { "free_empty_accesses", "A vector memory micro-op whose elements an earlier micro-op of the instruction covered takes no issue attempt of the cycle; false is the attempt it took before", "false"},
                 #ifdef VANADIS_BUILD_DEBUG
                 { "address_mask", "Can mask off address bits if needed during construction of a operation for debug", "0xFFFFFFFFFFFFFFFF"}
                 #endif
@@ -96,7 +97,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             fp_load_extra_cycles_(params.find<uint64_t>("fp_load_extra_cycles", 0)),
             load_line_window_(params.find<uint32_t>("load_line_window", 0)),
             load_new_lines_per_cycle_(params.find<uint32_t>("load_new_lines_per_cycle", 0)),
-            store_lines_per_cycle_(params.find<uint32_t>("store_lines_per_cycle", 0))
+            store_lines_per_cycle_(params.find<uint32_t>("store_lines_per_cycle", 0)),
+            free_empty_accesses_(params.find<bool>("free_empty_accesses", false))
         {
             std_mem_handlers_ = new VanadisBasicLoadStoreQueue::StandardMemHandlers(this, output_);
 
@@ -148,6 +150,20 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         bool storeFull() override { return op_q_size_ >= max_stores_; }
         bool loadFull() override { return op_q_size_ >= max_loads_; }
         bool storeBufferFull() override { return std_stores_in_flight_.size() >= max_stores_; }
+
+        /*
+         * Whether a store that the core issues ahead of older loads will find a store-buffer entry when it reaches the front
+         * of the queue: the stores already pending and those still in the queue leave one free.
+         * Handling: counts the stores of the thread's queue. Emits nothing.
+         */
+        bool storeBufferHasRoom(const uint32_t thread) override
+        {
+            size_t queued = 0;
+            for (const VanadisBasicLoadStoreEntry* e : op_q_[thread]) {
+                if (const_cast<VanadisBasicLoadStoreEntry*>(e)->getEntryOp() == VanadisBasicLoadStoreEntryOp::STORE) queued++;
+            }
+            return stores_pending_size_ + queued < max_stores_;
+        }
 
         size_t storeSize() override { return op_q_size_; }
         size_t loadSize() override { return op_q_size_; }
@@ -349,6 +365,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             }
 
             // this can be called multiple times per cycle; the second register of a load pair takes no issue slot
+            // With free_empty_accesses an empty vector access takes no attempt either; free_left bounds them per cycle.
+            uint32_t free_left = free_empty_accesses_ ? 4096 : 0;
             for(uint32_t attempt = 0, slots = 0; slots < max_issue_attempts_per_cycle_ && attempt < 2 * max_issue_attempts_per_cycle_; ++attempt) {
                 if (op_q_size_ == 0)
                     break;
@@ -366,6 +384,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 const bool empty_access = attempt_result && front_ins != nullptr && ! executed_before && front_ins->completedExecution()
                     && INST_FENCE != front_ins->getInstFuncType();
                 if ( ! shares && ! empty_access ) slots++;
+                if ( empty_access && free_left > 0 ) { free_left--; attempt--; }
                 op_q_index_++;
                 if ( op_q_index_ == hw_threads_ ) op_q_index_ = 0;
             }
@@ -985,7 +1004,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
 
             // if the store is not a split operation, then copy payload we are good to go, if it is split
             // handle this case later after we do a load of address and width calculation
-            if(LIKELY(! needs_split)) {
+            if(LIKELY(! needs_split) && ! store_ins->zeroesData()) {
                     getStoreTarget(store_entry,store_ins, &target_thread, &target_reg);
                     register_files_->at(target_thread)->copyFromRegister(target_reg, store_ins->getRegisterOffset(), &payload[0], store_width,
                 store_ins->getValueRegisterType() == STORE_FP_REGISTER);
@@ -1018,7 +1037,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
 
                     payload.resize(store_width_left);
                     getStoreTarget(store_entry,store_ins, &target_thread, &target_reg);
-                    register_files_->at(target_thread)->copyFromRegister(target_reg, store_ins->getRegisterOffset(), &payload[0], store_width_left,
+                    if(! store_ins->zeroesData()) register_files_->at(target_thread)->copyFromRegister(target_reg, store_ins->getRegisterOffset(), &payload[0], store_width_left,
                     store_ins->getValueRegisterType() == STORE_FP_REGISTER);
 
                     #ifdef VANADIS_BUILD_DEBUG
@@ -1034,11 +1053,11 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
 
                     payload.clear();
 
-                    payload.resize(store_width_right);
+                    payload.assign(store_width_right, 0);
 
 
                     getStoreTarget(store_entry,store_ins, &target_thread, &target_reg);
-                    register_files_->at(target_thread)->copyFromRegister(target_reg, store_ins->getRegisterOffset()+store_width_left, &payload[0], store_width_right,
+                    if(! store_ins->zeroesData()) register_files_->at(target_thread)->copyFromRegister(target_reg, store_ins->getRegisterOffset()+store_width_left, &payload[0], store_width_right,
                     store_ins->getValueRegisterType() == STORE_FP_REGISTER);
 
                     #ifdef VANADIS_BUILD_DEBUG
@@ -1836,6 +1855,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         const size_t max_stores_;
         const size_t max_loads_;
         const uint32_t max_issue_attempts_per_cycle_;
+        // free_empty_accesses: empty vector accesses take no issue attempt.
+        const bool free_empty_accesses_;
         const uint32_t stores_per_cycle_;
         const uint64_t store_forward_cycles_;
         uint32_t stores_this_cycle_ = 0;

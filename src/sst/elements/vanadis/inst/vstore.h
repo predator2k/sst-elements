@@ -87,6 +87,9 @@ public:
     // A plain store of one register reads its data register when it goes to memory, and a load may take its bytes.
     virtual bool forwardsDataToLoads() const { return MEM_TRANSACTION_NONE == memAccessType; }
 
+    // The store writes zeros of its whole width and reads no data register (A64 DC ZVA).
+    virtual bool zeroesData() const { return false; }
+
     bool isStoreDataIntRegIn(const uint16_t index) const override
     {
         return forwardsDataToLoads() && STORE_INT_REGISTER == regType && 1 == index;
