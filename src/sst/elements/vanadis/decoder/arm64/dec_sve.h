@@ -93,7 +93,7 @@ VanadisARM64Decoder::decodeSveInt(uint64_t addr, uint32_t ins, VanadisInstructio
         case 1: {
             if ( (ins & 0x003E0000) == 0x00100000 ) {
                 auto* i = op(bundle, addr, "MOVPRFX.P", INST_FP_ARITH, movprfxPred, {}, {}, { pg, rd, rn }, { rd });
-                tc(i, A64Tc::V_ALU);
+                tc(i, A64Tc::INT_INTERNAL);
                 i->a = size;
                 i->d = bit(ins, 16);
                 return true;
@@ -269,7 +269,8 @@ VanadisARM64Decoder::decodeSveInt(uint64_t addr, uint32_t ins, VanadisInstructio
     }
     if ( b1510 == 0b101111 ) {
         if ( (ins & 0xFFFFFC00) != 0x0420BC00 ) return false;
-        tc(op(bundle, addr, "MOVPRFX", INST_FP_ARITH, copyZ, {}, {}, { rn }, { rd }), A64Tc::V_ALU);
+        // MOVPRFX fuses with the instruction after it (X925 guide, section 4.15): the copy takes no time.
+        tc(op(bundle, addr, "MOVPRFX", INST_FP_ARITH, copyZ, {}, {}, { rn }, { rd }), A64Tc::INT_INTERNAL);
         return true;
     }
     if ( bits(ins, 15, 12) == 0b1011 ) return decodeSveFpMiscInt(addr, ins, bundle);

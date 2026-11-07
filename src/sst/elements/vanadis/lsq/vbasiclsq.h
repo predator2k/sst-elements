@@ -346,12 +346,19 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 if (op_q_size_ == 0)
                     break;
                 bool shares = false;
+                const VanadisInstruction* front_ins = nullptr;
                 if ( ! op_q_[op_q_index_].empty() ) {
-                    const VanadisLoadInstruction* load = dynamic_cast<const VanadisLoadInstruction*>(op_q_[op_q_index_].front()->getInstruction());
+                    front_ins = op_q_[op_q_index_].front()->getInstruction();
+                    const VanadisLoadInstruction* load = dynamic_cast<const VanadisLoadInstruction*>(front_ins);
                     shares = load != nullptr && load->sharesLoadPort();
                 }
+                const bool executed_before = front_ins != nullptr && front_ins->completedExecution();
                 const bool attempt_result = attempt_to_issue(cycle, attempt, op_q_index_);
-                if ( ! shares ) slots++;
+                // A vector access whose elements an earlier micro-op of the instruction covered makes no access and
+                // finishes when it issues: it takes no issue slot.
+                const bool empty_access = attempt_result && front_ins != nullptr && ! executed_before && front_ins->completedExecution()
+                    && INST_FENCE != front_ins->getInstFuncType();
+                if ( ! shares && ! empty_access ) slots++;
                 op_q_index_++;
                 if ( op_q_index_ == hw_threads_ ) op_q_index_ = 0;
             }
