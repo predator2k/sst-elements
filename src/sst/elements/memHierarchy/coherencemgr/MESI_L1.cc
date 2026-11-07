@@ -366,6 +366,11 @@ bool MESIL1::handleGetX(MemEvent* event, bool in_mshr) {
     if (in_mshr)
         mshr_->removePendingRetry(addr);
 
+    // streaming_write_on_retry: the bytes of a write to one of the last write-miss lines count when the write arrives,
+    // also while the line still waits for its data.
+    if (streaming_writes_ && streaming_write_on_retry_ && !in_mshr)
+        noteWrittenBytes(addr, event->getAddr() - event->getBaseAddr(), event->getPayload().size());
+
     // Any event other than an unlock or store-conditional needs to stall for a cache flush
     if (is_flushing_ && !in_mshr && !event->isStoreConditional() && !event->queryFlag(MemEvent::F_LOCKED)) {
         event_debuginfo_.action = "Reject";
@@ -426,6 +431,7 @@ bool MESIL1::handleGetX(MemEvent* event, bool in_mshr) {
                     }
                     if (write_miss_lines_.size() >= STREAM_LINES) write_miss_lines_.erase(write_miss_lines_.begin());
                     write_miss_lines_.emplace_back(addr, 0);
+                    if (streaming_write_on_retry_) noteWrittenBytes(addr, event->getAddr() - event->getBaseAddr(), event->getPayload().size());
                 }
                 send_time = forwardMessage(event, line_size_, 0, nullptr, Command::GetX);
                 line->setState(IM);
