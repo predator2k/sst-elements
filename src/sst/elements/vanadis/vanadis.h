@@ -370,6 +370,8 @@ private:
     // its group.
     uint32_t retire_instructions_per_cycle = 0;
     bool retired_group_end_ = false;
+    // Whether the micro-op that the last call of performIssueRenamed issued is an element companion (it takes no issue slot).
+    bool last_issued_companion_ = false;
     // stores_pass_loads: plain stores issue ahead of older plain loads.
     bool stores_pass_loads = false;
     uint32_t rob_instruction_limit = 0;

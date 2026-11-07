@@ -779,6 +779,7 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
             if ( QUEUE_NONE != queue && queue_entries[queue] > 0 && queue_used[queue] > 0 ) queue_used[queue]--;
             ins->markIssued();
             ins->setIssueCycle(cycle);
+            last_issued_companion_ = ins->isElementCompanion();
             ins->setAccumulatorReadyCycle(cycle + ins->getAccumulatorCycles());
             if ( nullptr != timing && timing->accumulator_alternate ) ins->setFastAccumulate(fast_accumulate_pending_);
             ins_issued_this_cycle++;
@@ -1873,6 +1874,8 @@ VanadisCore::tick(SST::Cycle_t cycle)
     // reach the max issues this cycle
     std::vector<int> rc(hw_threads,0);
     auto cnt = hw_threads;
+    // An element companion that issues takes no slot of issues_per_cycle, up to a bound per cycle.
+    uint32_t companions_left = 4096;
     for ( uint32_t i = 0; i < issues_per_cycle; ++i ) {
         // find an unblocked hardware thread
         while ( 0 != rc[m_curIssueHwThread] && cnt ) {
@@ -1884,8 +1887,13 @@ VanadisCore::tick(SST::Cycle_t cycle)
         // we found a unblocked hardware thread
         if ( cnt ) {
             auto thr = m_curIssueHwThread;
+            last_issued_companion_ = false;
             rc[thr] = rename_at_dispatch ? performIssueRenamed(cycle, thr, rob_start[thr], unallocated_memory_op_seen[thr])
                                          : performIssue(cycle, thr, rob_start[thr], unallocated_memory_op_seen[thr]);
+            if ( 0 == rc[thr] && last_issued_companion_ && companions_left > 0 ) {
+                companions_left--;
+                i--;
+            }
             ++m_curIssueHwThread;
             m_curIssueHwThread %= (hw_threads);
             cnt = (hw_threads);
