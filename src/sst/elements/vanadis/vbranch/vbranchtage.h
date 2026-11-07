@@ -37,7 +37,10 @@ public:
         { "tagged_entries", "Entries of each tagged table, a power of two", "4096" },
         { "history_lengths", "Global history length of each tagged table, shortest first, up to 2048 branches and 16 tables", "[4, 8, 16, 32, 64, 128, 256]" },
         { "return_stack_entries", "Entries of the return address stack", "32" },
-        { "allocations_per_misprediction", "Tagged tables longer than the provider in which a wrong prediction takes a free entry, shortest first", "1" })
+        { "allocations_per_misprediction", "Tagged tables longer than the provider in which a wrong prediction takes a free entry, shortest first", "1" },
+        { "local_history_entries", "Branches whose own outcomes a local predictor keeps, a power of two; 0 has no local predictor", "0" },
+        { "local_history_bits", "Outcomes of its own that a branch's local history holds, up to 32", "16" },
+        { "local_pattern_entries", "Entries of the table indexed by a branch and its local history, a power of two", "16384" })
 
     SST_ELI_DOCUMENT_STATISTICS(
         { "direction_predictions", "Conditional branches predicted", "branches", 1 },
@@ -50,6 +53,9 @@ public:
         const uint32_t tagged = params.find<uint32_t>("tagged_entries", 4096);
         return_stack_entries_ = params.find<uint32_t>("return_stack_entries", 32);
         allocations_ = std::max<uint32_t>(1, params.find<uint32_t>("allocations_per_misprediction", 1));
+        const uint32_t local_histories = params.find<uint32_t>("local_history_entries", 0);
+        local_history_bits_ = std::min<uint32_t>(32, std::max<uint32_t>(1, params.find<uint32_t>("local_history_bits", 16)));
+        const uint32_t local_patterns = params.find<uint32_t>("local_pattern_entries", 16384);
         std::vector<uint32_t> lengths;
         params.find_array<uint32_t>("history_lengths", lengths);
         if ( lengths.empty() ) lengths = { 4, 8, 16, 32, 64, 128, 256 };
@@ -65,6 +71,14 @@ public:
             }
         }
 
+        if ( local_histories > 0 ) {
+            if ( ! powerOfTwo(local_histories) || ! powerOfTwo(local_patterns) ) {
+                output_->fatal(CALL_INFO, -1, "local_history_entries and local_pattern_entries must be powers of two\n");
+            }
+            local_histories_.assign(local_histories, 0);
+            local_patterns_.assign(local_patterns, LocalEntry{});
+            local_choosers_.assign(local_histories, 0);
+        }
         bimodal_.assign(bimodal, 0);
         bimodal_mask_ = bimodal - 1;
         tagged_mask_ = tagged - 1;
@@ -161,6 +175,7 @@ public:
         for ( size_t k = 0; k < in_flight_.size(); ++k ) {
             const bool last = k + 1 == in_flight_.size();
             const bool taken = last && resolved_conditional ? next != in_flight_[k].fall_through : in_flight_[k].prediction;
+            in_flight_[k].history_outcome = taken;
             shiftIn(history_, taken);
         }
         returns_ = retired_returns_;
@@ -224,6 +239,22 @@ private:
         //! The index and tag of the branch in each tagged table, computed once at prediction.
         std::array<uint32_t, MAX_TABLES> index;
         std::array<uint16_t, MAX_TABLES> tag;
+        //! The prediction of the tagged tables alone; prediction differs when the local predictor overrides it.
+        bool tage_prediction = false;
+        //! The outcome the histories took: the prediction, or the outcome once the branch resolved wrong.
+        bool history_outcome = false;
+        //! The local pattern entry, its tag, whether it matched, and its prediction.
+        uint32_t local_index = 0;
+        uint16_t local_tag = 0;
+        bool local_valid = false;
+        bool local_prediction = false;
+    };
+
+    //! An entry of the local pattern table: a tag and a counter of -4 to 3.
+    struct LocalEntry
+    {
+        uint16_t tag = 0;
+        int8_t counter = 0;
     };
 
     //! Another predicted branch: retire moves the return address stack forward.
@@ -314,6 +345,9 @@ private:
             const bool newly_allocated = (provider.counter == 0 || provider.counter == -1) && provider.useful == 0;
             branch.prediction = newly_allocated ? branch.alternate_prediction : provider.counter >= 0;
         }
+        branch.tage_prediction = branch.prediction;
+        if ( ! local_histories_.empty() ) predictLocal(branch);
+        branch.history_outcome = branch.prediction;
         in_flight_.push_back(branch);
         stat_predictions_->addData(1);
         shiftIn(history_, branch.prediction);
@@ -322,9 +356,65 @@ private:
         return fall_through;
     }
 
+    /*
+     * The local predictor: a branch's own recent outcomes, the retired ones and those of its older instances in flight,
+     * index a tagged pattern table; a strong entry overrides the tagged tables while the branch's chooser favours it.
+     * Handling: sets the local fields of branch and, when the local entry decides, its prediction. Emits nothing.
+     */
+    void predictLocal(InFlight& branch) const
+    {
+        const uint32_t slot = localSlot(branch.address);
+        uint32_t history = local_histories_[slot];
+        for ( const InFlight& older : in_flight_ ) {
+            if ( older.address == branch.address ) history = (history << 1) | (older.history_outcome ? 1u : 0u);
+        }
+        history &= localMask();
+        const uint64_t pc = branch.address >> 2;
+        const uint64_t mixed = (pc * 0x9E3779B97F4A7C15ull) ^ (static_cast<uint64_t>(history) * 0xC2B2AE3D27D4EB4Full);
+        branch.local_index = static_cast<uint32_t>((mixed >> 20) & (local_patterns_.size() - 1));
+        branch.local_tag = static_cast<uint16_t>((mixed >> 48) & ((1u << TAG_BITS) - 1));
+        const LocalEntry& entry = local_patterns_[branch.local_index];
+        branch.local_valid = entry.tag == branch.local_tag;
+        branch.local_prediction = entry.counter >= 0;
+        const bool strong = entry.counter >= 2 || entry.counter <= -3;
+        if ( branch.local_valid && strong && local_choosers_[slot] >= 2 ) branch.prediction = branch.local_prediction;
+    }
+
+    /*
+     * Trains the local predictor at retire with the outcome of a branch.
+     * Handling: steps or replaces the pattern entry, moves the chooser toward the predictor that was right when the two
+     * disagreed, and shifts the outcome into the branch's retired local history. Emits nothing.
+     */
+    void trainLocal(const InFlight& branch, const bool taken)
+    {
+        const uint32_t slot = localSlot(branch.address);
+        LocalEntry& entry = local_patterns_[branch.local_index];
+        if ( branch.local_valid ) {
+            if ( branch.local_prediction != branch.tage_prediction ) {
+                int8_t& chooser = local_choosers_[slot];
+                if ( branch.local_prediction == taken && chooser < 3 ) ++chooser;
+                else if ( branch.tage_prediction == taken && chooser > 0 ) --chooser;
+            }
+            if ( entry.tag == branch.local_tag ) step(entry.counter, taken, COUNTER_MIN, COUNTER_MAX);
+        }
+        else if ( entry.counter == 0 || entry.counter == -1 ) {
+            entry.tag = branch.local_tag;
+            entry.counter = taken ? 0 : -1;
+        }
+        else {
+            entry.counter += entry.counter > 0 ? -1 : 1;
+        }
+        local_histories_[slot] = ((local_histories_[slot] << 1) | (taken ? 1u : 0u)) & localMask();
+    }
+
+    uint32_t localSlot(const uint64_t addr) const { return static_cast<uint32_t>((addr >> 2) & (local_histories_.size() - 1)); }
+
+    uint32_t localMask() const { return local_history_bits_ >= 32 ? 0xFFFFFFFFu : ((1u << local_history_bits_) - 1); }
+
     void train(const InFlight& branch, const bool taken)
     {
         if ( branch.prediction != taken ) stat_mispredictions_->addData(1);
+        if ( ! local_histories_.empty() ) trainLocal(branch, taken);
 
         if ( NO_TABLE == branch.provider ) {
             step(bimodal_[bimodalIndex(branch.address)], taken, BIMODAL_MIN, BIMODAL_MAX);
@@ -343,7 +433,7 @@ private:
             }
         }
 
-        if ( branch.prediction != taken ) allocate(branch, taken);
+        if ( branch.tage_prediction != taken ) allocate(branch, taken);
 
         if ( ++updates_ % USEFUL_AGE_PERIOD == 0 ) {
             for ( Table& table : tables_ ) {
@@ -423,6 +513,12 @@ private:
     Statistic<uint64_t>* stat_mispredictions_ = nullptr;
     //! allocations_per_misprediction.
     uint32_t allocations_ = 1;
+    //! The local predictor: the retired local history and the chooser (0 to 3, 2 and above favour the local entry) of
+    //! each branch slot, the pattern table, and local_history_bits. Empty without a local predictor.
+    std::vector<uint32_t> local_histories_;
+    std::vector<int8_t> local_choosers_;
+    std::vector<LocalEntry> local_patterns_;
+    uint32_t local_history_bits_ = 16;
 };
 
 } // namespace Vanadis
