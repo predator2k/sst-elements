@@ -296,15 +296,21 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
 
             // attempt to issue any front of ROB stores into memory system
             for (int i = 0; i < hw_threads_ && stores_this_cycle_ < stores_per_cycle_; i++) {
-                if (issueStoreFront(stores_pending_index_)) stores_this_cycle_++;
+                commitFrontStore(stores_pending_index_);
                 stores_pending_index_ = (stores_pending_index_ + 1) % hw_threads_;
             }
-            stores_this_cycle_ = 0;
+            // A store that took more ports than were left takes them from the next cycle.
+            stores_this_cycle_ = stores_this_cycle_ > stores_per_cycle_ ? stores_this_cycle_ - stores_per_cycle_ : 0;
         }
 
         void commitFrontStore(const uint32_t thread) override
         {
-            if (stores_this_cycle_ < stores_per_cycle_ && issueStoreFront(thread)) stores_this_cycle_++;
+            if (stores_this_cycle_ >= stores_per_cycle_ || stores_pending_[thread].empty()) return;
+            VanadisBasicStorePendingEntry* front = stores_pending_[thread].front();
+            uint32_t ports = 1;
+            if (front->getStoreInstruction()->takesAllStorePorts()) ports = stores_per_cycle_;
+            else if (operationStraddlesCacheLine(front->getStoreAddress(), front->getStoreWidth())) ports = 2;
+            if (issueStoreFront(thread)) stores_this_cycle_ += ports;
         }
 
     protected:

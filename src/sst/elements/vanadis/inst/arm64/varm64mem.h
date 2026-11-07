@@ -37,6 +37,7 @@ struct VanadisArm64MemPayload
     uint32_t mbytes = 1;        // bytes of one memory element
     uint32_t shift = 0;         // left shift of the index
     uint32_t mode = 0;          // the kind of index
+    bool     scatter = false;   // one element of a scatter store
     uint32_t stride = 1;        // memory bytes per structure
     uint32_t first = 0;         // first image byte of the chunk, or the element number
     uint32_t length = 0;        // image bytes of the chunk
@@ -152,6 +153,7 @@ public:
     // holds the data and is read when the store goes to memory. A vector store gives no bytes to a load.
     bool isStoreDataFPRegIn(const uint16_t index) const override { return 0 == index; }
     bool forwardsDataToLoads() const override { return false; }
+    bool takesAllStorePorts() const override { return m.scatter; }
 
     uint64_t phys_x(VanadisRegisterFile* rf, uint16_t pos) const { return rf->getIntReg<uint64_t>(phys_int_regs_in[pos]); }
     const uint8_t* phys_v(VanadisRegisterFile* rf, uint16_t pos) const { return rf->fpRegBytes(phys_fp_regs_in[pos]); }

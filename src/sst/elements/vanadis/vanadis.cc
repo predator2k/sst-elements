@@ -556,7 +556,12 @@ VanadisCore::inputValuesReady(const VanadisInstruction* ins, const bool include_
     for ( uint16_t i = 0; i < ins->countISAFPRegIn(); ++i ) {
         if ( ! include_store_data && ins->isStoreDataFPRegIn(i) ) continue;
         const VanadisInstruction* producer = fp_phys_reg_producer[ins->getPhysFPRegIn(i)];
-        if ( nullptr != producer && ! producer->completedExecution() ) return false;
+        if ( nullptr == producer || producer->completedExecution() ) continue;
+        // The accumulator of a multiply-add bypasses the multiplier of the multiply-add that produces it. The consumer
+        // executes after the producer, because both take the same number of cycles from issue.
+        const bool bypassed = i == ins->getAccumulatorFPRegIn() && producer->getAccumulatorCycles() > 0
+            && producer->completedIssue() && issue_stage_cycle >= producer->getAccumulatorReadyCycle();
+        if ( ! bypassed ) return false;
     }
     return true;
 }
@@ -644,6 +649,7 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
 
         if ( can_issue && 0 == allocateFunctionalUnit(ins) ) {
             ins->markIssued();
+            ins->setAccumulatorReadyCycle(cycle + ins->getAccumulatorCycles());
             ins_issued_this_cycle++;
             rob_start = j;
             return 0;
@@ -1691,6 +1697,7 @@ VanadisCore::tick(SST::Cycle_t cycle)
     }
 
     if ( rename_at_dispatch ) {
+        issue_stage_cycle = cycle;
         if ( 0 == cycle % LOAD_WAIT_CLEAR_CYCLES ) std::fill(load_waits_for_stores.begin(), load_waits_for_stores.end(), 0);
         for ( uint32_t thr = 0; thr < hw_threads; ++thr ) {
             performRename(thr);

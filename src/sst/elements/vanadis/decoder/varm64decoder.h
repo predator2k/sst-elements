@@ -67,7 +67,10 @@ public:
         { "dczid_block_bytes", "Block size DC ZVA zeroes and DCZID_EL0 reports, bytes (a power of two)", "64" },
         { "counter_hz", "Frequency CNTFRQ_EL0 reports and CNTVCT_EL0 counts at, Hz", "1000000000" },
         { "integer_mul_extra_cycles", "Cycles a scalar integer multiply takes above the latency of the integer unit", "0" },
-        { "fp_mul_extra_cycles", "Cycles a floating-point multiply takes above the latency of the FP unit. A multiply-add has the unit latency, because the accumulator input is bypassed", "0" },
+        { "fp_mul_extra_cycles", "Cycles a floating-point multiply takes above the latency of the FP unit", "0" },
+        { "fp_mla_extra_cycles", "Cycles a floating-point multiply-add takes above the latency of the FP unit", "0" },
+        { "fp_accumulator_cycles", "Cycles from the issue of a multiply-add until another multiply-add can take its result as the accumulator; 0 is no bypass", "0" },
+        { "gp_fp_transfer_extra_cycles", "Cycles a move between a general register and a vector register takes above the latency of the integer unit", "0" },
         { "core_hz", "Core clock, Hz; CNTVCT_EL0 is the cycle count scaled by counter_hz / core_hz", "1000000000" },
         { "unimplemented_as_nop", "Test aid: decode an instruction the decoder does not implement as a no-op and print "
                                   "its word, instead of a decode fault", "0" })
@@ -83,6 +86,9 @@ public:
         counter_hz        = params.find<uint64_t>("counter_hz", 1000000000ull);
         integer_mul_extra_cycles = params.find<uint16_t>("integer_mul_extra_cycles", 0);
         fp_mul_extra_cycles      = params.find<uint16_t>("fp_mul_extra_cycles", 0);
+        fp_mla_extra_cycles      = params.find<uint16_t>("fp_mla_extra_cycles", 0);
+        fp_accumulator_cycles    = params.find<uint16_t>("fp_accumulator_cycles", 0);
+        gp_fp_transfer_extra_cycles = params.find<uint16_t>("gp_fp_transfer_extra_cycles", 0);
         core_hz           = params.find<uint64_t>("core_hz", 1000000000ull);
         options           = new VanadisDecoderOptions(
             A64Reg::NO_ZERO_REG, A64Reg::INT_COUNT, A64Reg::FP_COUNT, /* syscall code */ 8, VANADIS_REGISTER_MODE_FP64,
@@ -207,6 +213,16 @@ protected:
     uint64_t                     counter_hz;
     uint16_t                     integer_mul_extra_cycles;
     uint16_t                     fp_mul_extra_cycles;
+    uint16_t                     fp_mla_extra_cycles;
+    uint16_t                     fp_accumulator_cycles;
+    uint16_t                     gp_fp_transfer_extra_cycles;
+
+    // The latency of a multiply-add; accumulator is the index of the accumulator among the FP inputs of the micro-op.
+    void markMultiplyAdd(VanadisArm64Inst* i, const uint16_t accumulator)
+    {
+        i->setExtraExecuteCycles(fp_mla_extra_cycles);
+        i->setAccumulatorFPRegIn(accumulator, fp_accumulator_cycles);
+    }
     uint64_t                     core_hz;
 
     // ---------------------------------------------------------------- field helpers

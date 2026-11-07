@@ -215,6 +215,7 @@ VanadisARM64Decoder::sveScatter(uint64_t addr, VanadisInstructionBundle* bundle,
     const uint32_t elements = vector_bytes >> log2_ebytes;
     for ( uint32_t e = 0; e < elements; ++e ) {
         auto* s = new VanadisArm64VecStore(addr, hw_thr, options, scatterResolve, { base }, { zt, pg, zm });
+        s->m.scatter = true;
         s->m.imm = imm;
         s->m.log2_ebytes = log2_ebytes;
         s->m.mbytes = mbytes;

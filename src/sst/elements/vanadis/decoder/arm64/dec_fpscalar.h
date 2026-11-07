@@ -63,6 +63,7 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
             { rn16, rm16, static_cast<uint16_t>(bits(ins, 14, 10)) }, { rd16 });
         i->a = fmt;
         i->c = (static_cast<uint32_t>(bit(ins, 21)) << 1) | static_cast<uint32_t>(bit(ins, 15));
+        markMultiplyAdd(i, 2);
         return true;
     }
 
@@ -138,12 +139,14 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
             if ( bytes == 0 ) return false;
             if ( opcode == 6 ) {
                 auto* i = op(bundle, addr, "FMOV.TOGP", INST_INT_ARITH, fpMoveToGp, {}, { rd == 31 ? A64Reg::T1 : rd16 }, { rn16 }, {});
+                i->setExtraExecuteCycles(gp_fp_transfer_extra_cycles);
                 i->a = bytes;
                 i->c = high ? 8 : 0;
             }
             else {
                 auto* i = op(bundle, addr, "FMOV.FROMGP", INST_INT_ARITH, fpMoveFromGp, { rz(rn) }, {},
                     high ? std::vector<uint16_t> { rd16 } : std::vector<uint16_t> {}, { rd16 });
+                i->setExtraExecuteCycles(gp_fp_transfer_extra_cycles);
                 i->a = bytes;
                 i->d = high;
             }

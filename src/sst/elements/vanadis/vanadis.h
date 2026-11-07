@@ -332,6 +332,7 @@ private:
     static constexpr int UNISSUED_STORE = 2;
     static constexpr int UNISSUED_ORDERED = 4;
 
+    uint64_t issue_stage_cycle = 0;
     uint32_t renames_per_cycle = 0;
     uint64_t misprediction_extra_cycles = 0;
     std::vector<uint64_t> decode_resume_cycle;

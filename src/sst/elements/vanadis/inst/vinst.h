@@ -82,6 +82,9 @@ class VanadisInstruction
             is_serializing_       = false;
             extra_execute_cycles_ = 0;
             memory_sequence_      = 0;
+            accumulator_fp_reg_in_ = NO_ACCUMULATOR;
+            accumulator_cycles_   = 0;
+            accumulator_ready_cycle_ = 0;
             end_uop_group_        = false;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -120,6 +123,9 @@ class VanadisInstruction
             is_serializing_       = copy_me.is_serializing_;
             extra_execute_cycles_ = copy_me.extra_execute_cycles_;
             memory_sequence_      = copy_me.memory_sequence_;
+            accumulator_fp_reg_in_ = copy_me.accumulator_fp_reg_in_;
+            accumulator_cycles_   = copy_me.accumulator_cycles_;
+            accumulator_ready_cycle_ = copy_me.accumulator_ready_cycle_;
             end_uop_group_        = copy_me.end_uop_group_;
             is_front_of_rob_      = false;
             has_rob_slot_         = false;
@@ -435,6 +441,15 @@ class VanadisInstruction
         uint64_t getMemorySequence() const { return memory_sequence_; }
         void setMemorySequence(const uint64_t sequence) { memory_sequence_ = sequence; }
 
+        // A multiply-add: index is the FP input that is the accumulator, and another multiply-add can take this one's result
+        // on that input cycles after this one issues, ahead of the full latency of the multiplier.
+        static constexpr uint16_t NO_ACCUMULATOR = 0xFFFF;
+        void setAccumulatorFPRegIn(const uint16_t index, const uint16_t cycles) { accumulator_fp_reg_in_ = index; accumulator_cycles_ = cycles; }
+        uint16_t getAccumulatorFPRegIn() const { return accumulator_fp_reg_in_; }
+        uint16_t getAccumulatorCycles() const { return accumulator_cycles_; }
+        void setAccumulatorReadyCycle(const uint64_t cycle) { accumulator_ready_cycle_ = cycle; }
+        uint64_t getAccumulatorReadyCycle() const { return accumulator_ready_cycle_; }
+
         // With rename_at_dispatch a store issues when its address is known; these inputs are read when it goes to memory.
         virtual bool isStoreDataIntRegIn(const uint16_t index) const { return false; }
         virtual bool isStoreDataFPRegIn(const uint16_t index) const { return false; }
@@ -495,6 +510,9 @@ class VanadisInstruction
         bool is_serializing_;
         uint16_t extra_execute_cycles_;
         uint64_t memory_sequence_;
+        uint16_t accumulator_fp_reg_in_;
+        uint16_t accumulator_cycles_;
+        uint64_t accumulator_ready_cycle_;
         bool end_uop_group_;
         bool is_front_of_rob_;
         bool has_rob_slot_;

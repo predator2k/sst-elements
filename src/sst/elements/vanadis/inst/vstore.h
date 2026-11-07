@@ -77,6 +77,9 @@ public:
 
     virtual bool isPartialStore() { return false; }
 
+    // The store takes every store port of the cycle: one element of a scatter.
+    virtual bool takesAllStorePorts() const { return false; }
+
     // A plain store of one register reads its data register when it goes to memory, and a load may take its bytes.
     virtual bool forwardsDataToLoads() const { return MEM_TRANSACTION_NONE == memAccessType; }
 
