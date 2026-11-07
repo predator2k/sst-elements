@@ -1552,7 +1552,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 VanadisStoreInstruction* store_ins = store_entry->getStoreInstruction();
                 const uint64_t store_address = store_entry->getStoreAddress();
                 const bool covers = store_address <= address && address + width <= store_address + store_entry->getStoreWidth();
-                if(! covers || ! store_ins->storeDataReadAtMemory()) return false;
+                if(! covers || ! store_ins->forwardsDataToLoads()) return false;
                 if(store_data_ready_ && ! store_data_ready_(store_ins)) return false;
 
                 uint16_t target_thread;

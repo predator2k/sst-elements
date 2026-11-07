@@ -67,7 +67,7 @@ public:
         { "dczid_block_bytes", "Block size DC ZVA zeroes and DCZID_EL0 reports, bytes (a power of two)", "64" },
         { "counter_hz", "Frequency CNTFRQ_EL0 reports and CNTVCT_EL0 counts at, Hz", "1000000000" },
         { "integer_mul_extra_cycles", "Cycles a scalar integer multiply takes above the latency of the integer unit", "0" },
-        { "fp_mul_extra_cycles", "Cycles a floating-point multiply or multiply-add takes above the latency of the FP unit", "0" },
+        { "fp_mul_extra_cycles", "Cycles a floating-point multiply takes above the latency of the FP unit. A multiply-add has the unit latency, because the accumulator input is bypassed", "0" },
         { "core_hz", "Core clock, Hz; CNTVCT_EL0 is the cycle count scaled by counter_hz / core_hz", "1000000000" },
         { "unimplemented_as_nop", "Test aid: decode an instruction the decoder does not implement as a no-op and print "
                                   "its word, instead of a decode fault", "0" })

@@ -63,7 +63,6 @@ VanadisARM64Decoder::decodeFpScalar(uint64_t addr, uint32_t ins, VanadisInstruct
             { rn16, rm16, static_cast<uint16_t>(bits(ins, 14, 10)) }, { rd16 });
         i->a = fmt;
         i->c = (static_cast<uint32_t>(bit(ins, 21)) << 1) | static_cast<uint32_t>(bit(ins, 15));
-        i->setExtraExecuteCycles(fp_mul_extra_cycles);
         return true;
     }
 

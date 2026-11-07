@@ -148,8 +148,10 @@ public:
 
     uint16_t getRegisterOffset() const override { return reg_offset; }
 
-    // The element and predicate registers decide the addresses, so every input must be ready at issue.
-    bool storeDataReadAtMemory() const override { return false; }
+    // The base, index and predicate registers decide the addresses, so they must be ready at issue. The first FP source
+    // holds the data and is read when the store goes to memory. A vector store gives no bytes to a load.
+    bool isStoreDataFPRegIn(const uint16_t index) const override { return 0 == index; }
+    bool forwardsDataToLoads() const override { return false; }
 
     uint64_t phys_x(VanadisRegisterFile* rf, uint16_t pos) const { return rf->getIntReg<uint64_t>(phys_int_regs_in[pos]); }
     const uint8_t* phys_v(VanadisRegisterFile* rf, uint16_t pos) const { return rf->fpRegBytes(phys_fp_regs_in[pos]); }

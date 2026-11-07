@@ -77,18 +77,17 @@ public:
 
     virtual bool isPartialStore() { return false; }
 
-    // The data register is read when the store goes to memory: a plain store of one register. A load may then also take
-    // its bytes from the store.
-    virtual bool storeDataReadAtMemory() const { return MEM_TRANSACTION_NONE == memAccessType; }
+    // A plain store of one register reads its data register when it goes to memory, and a load may take its bytes.
+    virtual bool forwardsDataToLoads() const { return MEM_TRANSACTION_NONE == memAccessType; }
 
     bool isStoreDataIntRegIn(const uint16_t index) const override
     {
-        return storeDataReadAtMemory() && STORE_INT_REGISTER == regType && 1 == index;
+        return forwardsDataToLoads() && STORE_INT_REGISTER == regType && 1 == index;
     }
 
     bool isStoreDataFPRegIn(const uint16_t index) const override
     {
-        return storeDataReadAtMemory() && STORE_FP_REGISTER == regType && 0 == index;
+        return forwardsDataToLoads() && STORE_FP_REGISTER == regType && 0 == index;
     }
 
     VanadisMemoryTransaction getTransactionType() const  { return memAccessType; }
