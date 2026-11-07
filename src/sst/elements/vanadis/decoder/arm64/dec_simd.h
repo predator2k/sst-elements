@@ -235,7 +235,7 @@ VanadisARM64Decoder::decodeSimdThreeExt(uint64_t addr, uint32_t ins, VanadisInst
     if ( opcode == 4 || (opcode == 5 && !U) ) {
         if ( size != 2 || !Q ) return false;
         auto* i = op(bundle, addr, "MMLA", INST_FP_ARITH, simdMmla, {}, {}, { rn, rm, rd }, { rd });
-        tc(i, A64Tc::V_DOT);
+        tc(i, A64Tc::V_MMLA);
         i->c = opcode == 5 ? 2 : (U ? 1 : 0);
         return true;
     }

@@ -59,7 +59,7 @@ struct A64SveDtype;
     X(V_DIVSQRT_4S, "v_divsqrt_4s") X(V_DIVSQRT_2D, "v_divsqrt_2d")                                                       \
     X(V_ALU, "v_alu") X(V_MISC, "v_misc") X(V_SHIFT, "v_shift") X(V_SHIFT_COMPLEX, "v_shift_complex")                     \
     X(V_SAT_NARROW, "v_sat_narrow") X(V_ACCUMULATE, "v_accumulate") X(V_REDUCE_S, "v_reduce_s") X(V_REDUCE_H, "v_reduce_h") \
-    X(V_REDUCE_B, "v_reduce_b") X(V_MUL, "v_mul") X(V_MLA, "v_mla") X(V_DOT, "v_dot") X(V_PMULL, "v_pmull")               \
+    X(V_REDUCE_B, "v_reduce_b") X(V_MUL, "v_mul") X(V_MLA, "v_mla") X(V_DOT, "v_dot") X(V_MMLA, "v_mmla") X(V_PMULL, "v_pmull") \
     X(V_TBL_LONG, "v_tbl_long") X(V_STRUCT_PERMUTE, "v_struct_permute")                                                   \
     X(CRYPTO_AES, "crypto_aes") X(CRYPTO_AES_MIX, "crypto_aes_mix") X(CRYPTO_SHA_FAST, "crypto_sha_fast") X(CRYPTO_SHA_SLOW, "crypto_sha_slow")               \
     X(CRYPTO_SHA3, "crypto_sha3") X(BF_DOT, "bf_dot") X(BF_MMLA, "bf_mmla") X(BF_CVT, "bf_cvt")                            \
@@ -507,7 +507,7 @@ protected:
     static bool accumulatesIntoDestination(const A64Tc c)
     {
         switch ( c ) {
-        case A64Tc::V_MLA: case A64Tc::V_ACCUMULATE: case A64Tc::V_DOT: case A64Tc::FP_COMPLEX_MLA: case A64Tc::BF_DOT:
+        case A64Tc::V_MLA: case A64Tc::V_ACCUMULATE: case A64Tc::V_DOT: case A64Tc::V_MMLA: case A64Tc::FP_COMPLEX_MLA: case A64Tc::BF_DOT:
         case A64Tc::BF_MMLA: case A64Tc::FP_INSERT_FROM_GP: case A64Tc::Z_CPY_GP: case A64Tc::Z_INSR_GP:
             return true;
         default:

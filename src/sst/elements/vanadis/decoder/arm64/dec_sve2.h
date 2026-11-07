@@ -389,7 +389,7 @@ VanadisARM64Decoder::decodeSve2(uint64_t addr, uint32_t ins, VanadisInstructionB
             else if ( size == 3 ) code = 1;
             else return false;
             auto* i = op(bundle, addr, "MMLA.Z", INST_FP_ARITH, mmlaZ, {}, {}, { rd, rn, rm }, { rd });
-            tc(i, A64Tc::V_DOT);
+            tc(i, A64Tc::V_MMLA);
             i->c = code;
             return true;
         }

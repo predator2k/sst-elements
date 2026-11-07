@@ -285,6 +285,11 @@ private:
     Cycle_t llsc_block_cycles_;
     // pipelined_read_hits: a read hit does not hold the line until its response leaves.
     bool pipelined_read_hits_ = false;
+    // streaming_write_misses: write misses to consecutive lines after which a write miss is a streaming write; the
+    // line of the last write miss and the length of the current run.
+    uint32_t streaming_write_misses_ = 0;
+    Addr last_write_miss_line_ = 0;
+    uint32_t write_miss_run_ = 0;
     Link* llsc_timeout_ = nullptr; // A self-link to trigger waiting requests when a LoadLink times out
 
     CacheArray<L1CacheLine>* cache_array_ = nullptr;

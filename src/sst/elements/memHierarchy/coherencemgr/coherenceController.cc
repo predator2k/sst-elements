@@ -871,6 +871,8 @@ void CoherenceController::addToOutgoingQueue(Response& resp) {
  * Again, to do not reorder events to the same address
  */
 void CoherenceController::addToOutgoingQueueUp(Response& resp) {
+    // The response to a streaming write miss of an L1 carries only its header through the response link width.
+    if (resp.event->getCmd() == Command::GetXResp && resp.event->queryFlag(MemEventBase::F_STREAMWRITE)) resp.size = packet_header_bytes_;
     list<Response>::reverse_iterator rit;
     for (rit = outgoing_event_queue_up_.rbegin(); rit != outgoing_event_queue_up_.rend(); rit++) {
         if (resp.delivery_time >= (*rit).delivery_time) break;

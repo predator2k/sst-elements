@@ -39,6 +39,7 @@ MESIL1::MESIL1(ComponentId_t id, Params& params, Params& owner_params, bool pref
     bool MESI = params.find<bool>("protocol", true);
     llsc_block_cycles_ = params.find<Cycle_t>("llsc_block_cycles", 0);
     pipelined_read_hits_ = params.find<bool>("pipelined_read_hits", false);
+    streaming_write_misses_ = params.find<uint32_t>("streaming_write_misses", 0);
 
     std::string frequency = params.find<std::string>("cache_frequency", "");
 
@@ -396,6 +397,12 @@ bool MESIL1::handleGetX(MemEvent* event, bool in_mshr) {
                     mshr_->setProfiled(addr);
                 }
 
+                // A write miss to the line after the last one continues a run; a long enough run is streaming.
+                if (streaming_write_misses_ > 0 && !in_mshr) {
+                    write_miss_run_ = (addr == last_write_miss_line_ + line_size_) ? write_miss_run_ + 1 : 1;
+                    last_write_miss_line_ = addr;
+                    if (write_miss_run_ >= streaming_write_misses_) event->setFlag(MemEvent::F_STREAMWRITE);
+                }
                 send_time = forwardMessage(event, line_size_, 0, nullptr, Command::GetX);
                 line->setState(IM);
                 line->setTimestamp(send_time);
@@ -2137,6 +2144,9 @@ void MESIL1::serialize_order(SST::Core::Serialization::serializer& ser) {
     SST_SER(protocol_read_state_);
     SST_SER(llsc_block_cycles_);
     SST_SER(pipelined_read_hits_);
+    SST_SER(streaming_write_misses_);
+    SST_SER(last_write_miss_line_);
+    SST_SER(write_miss_run_);
     SST_SER(llsc_timeout_);
     SST_SER(cache_array_);
     SST_SER(stat_event_stalled_for_lock);
