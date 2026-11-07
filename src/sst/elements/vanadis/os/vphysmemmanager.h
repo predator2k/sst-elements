@@ -48,6 +48,9 @@ class PhysMemManager {
         void setBit( int pos ) { m_bitMap.at( pos/64 ) |= ( 1UL << ( pos % 64 ) ); }
         void clearBit( int pos ) { m_bitMap.at( pos/64 ) &= ~( 1UL << ( pos % 64 ) ); }
 
+        //! Bits of the map, one per 4 KiB page.
+        size_t bits() const { return m_bitMap.size() * 64; }
+
         size_t findFirstEmptyBit( size_t start ) {
             for ( size_t i = start/64; i < m_bitMap.size(); i++ ) {
                 if ( m_bitMap[i] != 0xffffffffffff ) {
@@ -122,6 +125,18 @@ class PhysMemManager {
         return findFreePage( pageSize );
     }
 
+    /*
+     * Gives out the following 4 KiB pages in a random order instead of the first free page, as an operating system that
+     * hands out pages freed in the order the system freed them does, so the physical colours of a buffer's pages, and with
+     * them its sets in a physically indexed cache, are unrelated to its virtual addresses.
+     * Handling: each later allocation starts its search for a free page at a position drawn from a xorshift generator
+     * with this seed. Emits nothing.
+     */
+    void setRandomOrder( uint64_t seed ) {
+        m_random_state = seed ^ 0x9E3779B97F4A7C15ull;
+        if ( 0 == m_random_state ) m_random_state = 0x9E3779B97F4A7C15ull;
+    }
+
 
     void freePages( PageSize pageSize, PageList& pagesIn ) {
         for ( size_t i = 0; i < pagesIn.size(); i++ ) {
@@ -147,6 +162,7 @@ class PhysMemManager {
 
         fprintf(fp,"m_numAllocated %" PRIu64 "\n",m_numAllocated);
         m_bitMap.checkpoint(fp);
+        if ( 0 != m_random_state ) fprintf(fp,"m_random_state %" PRIu64 "\n",m_random_state);
     }
     void checkpointLoad( SST::Output* output , std::string dir ) {
         std::stringstream filename;
@@ -157,6 +173,8 @@ class PhysMemManager {
         assert( 1 == fscanf(fp,"m_numAllocated %" SCNu64 "\n",&m_numAllocated) );
         output->verbose(CALL_INFO, 0, VANADIS_DBG_CHECKPOINT,"m_numAllocated %" PRIu64 "\n",m_numAllocated);
         m_bitMap.checkpointLoad(output,fp);
+        uint64_t state = 0;
+        if ( 1 == fscanf(fp,"m_random_state %" SCNu64 "\n",&state) ) m_random_state = state;
     }
 
   private:
@@ -171,7 +189,19 @@ class PhysMemManager {
 
     int findFreePage( PageSize pageSize ) {
         if ( FourKB == pageSize ) {
-            size_t page = m_bitMap.findFirstEmptyBit(0);
+            size_t start = 0;
+            if ( 0 != m_random_state ) {
+                m_random_state ^= m_random_state << 13;
+                m_random_state ^= m_random_state >> 7;
+                m_random_state ^= m_random_state << 17;
+                start = m_random_state % m_bitMap.bits();
+            }
+            size_t page;
+            try {
+                page = m_bitMap.findFirstEmptyBit(start);
+            } catch ( int ) {
+                page = m_bitMap.findFirstEmptyBit(0);
+            }
             m_bitMap.setBit( page );
             ++m_numAllocated;
             return page;
@@ -203,6 +233,8 @@ class PhysMemManager {
 
     BitMap m_bitMap;
     uint64_t m_numAllocated;
+    //! State of the generator of setRandomOrder; 0 gives out the first free page.
+    uint64_t m_random_state = 0;
 };
 
 #endif

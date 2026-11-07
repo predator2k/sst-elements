@@ -351,6 +351,10 @@ private:
     static constexpr int UNISSUED_ORDERED = 4;
 
     uint64_t issue_stage_cycle = 0;
+    // accumulator_alternate: the program sequence of the last micro-op of such a class that issued (0 is none), and
+    // whether the instruction that inputValuesReady last found ready takes its accumulator at the shorter latency.
+    uint64_t last_alternate_sequence_ = 0;
+    mutable bool fast_accumulate_pending_ = false;
     uint32_t renames_per_cycle = 0;
     uint64_t misprediction_extra_cycles = 0;
     std::vector<uint64_t> decode_resume_cycle;

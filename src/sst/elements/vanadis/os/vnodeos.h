@@ -68,6 +68,8 @@ public:
         { "hwcap2", "AT_HWCAP2 value of the auxiliary vector", "0" },
         { "page_size", "Size of a page, in bytes", "4096" },
         { "useMMU", "Whether an MMU subcomponent is being used.", "False" },
+        { "physical_page_order", "Order in which the MMU gives out physical pages: first_free (the lowest free page) or random (a seeded random order, so the cache sets of a buffer do not follow its virtual addresses)", "first_free" },
+        { "physical_page_seed", "Seed of the random physical page order", "1" },
         { "process%(processnum)d.env_count", "Number of environment variables to pass to the process", "0"},
         { "process%(processnum)d.env%(argnum)d", "Environment variable to pass to the process. Example: 'OMPNUMTHREADS=64'. 'argnum' should be contiguous starting at 0 and ending at env_count-1", ""},
         { "proccess%(processnum)d.exe", "Name of executable, including path", NULL},

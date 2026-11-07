@@ -16,6 +16,8 @@
 #ifndef SIMPLE_TLB_H
 #define SIMPLE_TLB_H
 
+#include <algorithm>
+
 #include <sst/core/link.h>
 #include <sst/core/rng/xorshift.h>
 
@@ -124,6 +126,8 @@ class SimpleTLB : public TLB {
         {"max_virt_addr", "Maximum virtual address to be handled", "0x80000000"},
         {"minVirtAddr", "DEPRECATED. Use 'min_virt_addr' instead.", "4096"},
         {"maxVirtAddr", "DEPRECATED. Use 'max_virt_addr' instead.", "0x80000000"},
+        {"first_level_entries", "Entries of a fully associative first-level TLB in front of this one, least recently used out; a translation this TLB holds but the first level does not takes first_level_miss_cycles more. 0 is no first level", "0"},
+        {"first_level_miss_cycles", "Cycles a hit in this TLB takes above hit_latency when the first level misses", "0"},
         {"hitLatency", "DEPRECATED. Use 'hit_latency' instead. To update parameter without modifying timing, add one cycle to the value for 'hit_latency'. Clock used to default to 1ns but is now parameterizable and 'hitLatency' was treated as an additional latency beyond a minimum 1ns.", "0"},
     )
 
@@ -160,6 +164,21 @@ class SimpleTLB : public TLB {
 
     uint32_t pickVictim() {
         return rng_.generateNextUInt32() % tlb_set_size_;
+    }
+
+    /*
+     * Looks a page up in the first-level TLB of a thread and makes it the most recently used one.
+     * Handling: a hit moves the page to the front; a miss puts it at the front and drops the least recently used page
+     * when the level is full. Emits nothing. Returns whether the page was there.
+     */
+    bool touchFirstLevel( uint32_t hw_thread_id, uint32_t vpn ) {
+        auto& level = first_level_[ hw_thread_id ];
+        auto found = std::find( level.begin(), level.end(), vpn );
+        const bool hit = found != level.end();
+        if ( hit ) level.erase( found );
+        else if ( level.size() >= first_level_entries_ ) level.pop_back();
+        level.insert( level.begin(), vpn );
+        return hit;
     }
 
     void fillTlbEntry( uint32_t hw_thread_id, uint32_t vpn, uint32_t ppn, uint32_t perms ) {
@@ -251,6 +270,11 @@ class SimpleTLB : public TLB {
     uint64_t max_virt_addr_;
 
     std::vector< std::map<uint32_t,std::queue<RequestID> > > waiting_miss_; /* List of pending (vpn, request_queue) for each hw thread*/
+
+    //! first_level_entries and first_level_miss_cycles; the pages of the first level of each thread, most recent first.
+    uint32_t first_level_entries_ = 0;
+    uint32_t first_level_miss_cycles_ = 0;
+    std::vector< std::vector<uint32_t> > first_level_;
 };
 
 } //namespace MMU_Lib

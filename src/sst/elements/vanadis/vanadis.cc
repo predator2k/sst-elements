@@ -618,6 +618,13 @@ VanadisCore::accumulatorBypassed(const VanadisInstruction* ins, const VanadisIns
     const VanadisTimingRecord* p = producer->getTiming();
     const VanadisTimingRecord* c = ins->getTiming();
     if ( nullptr == p || nullptr == c ) return true;
+    // accumulator_alternate: the shorter latency only from the last such micro-op that issued, when it did not take it.
+    if ( p->accumulator_alternate ) {
+        const bool fast = 0 != last_alternate_sequence_ && producer->getProgramSequence() == last_alternate_sequence_
+            && ! producer->tookFastAccumulate();
+        if ( ! fast && issue_stage_cycle < producer->getAccumulatorReadyCycle() + 1 ) return false;
+        fast_accumulate_pending_ = fast;
+    }
     const uint64_t producer_executes = producer->getIssueCycle() + producer->getTimedLatency();
     const uint64_t consumer_executes = issue_stage_cycle + std::max<uint16_t>(c->latency, 1);
     return consumer_executes > producer_executes;
@@ -626,6 +633,7 @@ VanadisCore::accumulatorBypassed(const VanadisInstruction* ins, const VanadisIns
 bool
 VanadisCore::inputValuesReady(const VanadisInstruction* ins, const bool include_store_data) const
 {
+    fast_accumulate_pending_ = false;
     for ( uint16_t i = 0; i < ins->countISAIntRegIn(); ++i ) {
         if ( ! include_store_data && ins->isStoreDataIntRegIn(i) ) continue;
         const VanadisInstruction* producer = int_phys_reg_producer[ins->getPhysIntRegIn(i)];
@@ -746,6 +754,10 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
             ins->markIssued();
             ins->setIssueCycle(cycle);
             ins->setAccumulatorReadyCycle(cycle + ins->getAccumulatorCycles());
+            if ( nullptr != timing && timing->accumulator_alternate ) {
+                ins->setFastAccumulate(fast_accumulate_pending_);
+                last_alternate_sequence_ = ins->getProgramSequence();
+            }
             ins_issued_this_cycle++;
             rob_start = j;
             return 0;

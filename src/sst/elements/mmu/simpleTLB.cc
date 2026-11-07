@@ -99,6 +99,9 @@ SimpleTLB::SimpleTLB(SST::ComponentId_t id, SST::Params& params) : TLB(id,params
     }
     dbg_.debug(CALL_INFO,1,0,"num_hw_threads=%" PRIu32 " tlb_size=%" PRIu32 " tlb_set_size=%" PRIu32 "\n",num_hw_threads,tlb_size_,tlb_set_size_);
     tlb_index_shift_ = log2( tlb_size_ );
+    first_level_entries_ = params.find<uint32_t>("first_level_entries", 0);
+    first_level_miss_cycles_ = params.find<uint32_t>("first_level_miss_cycles", 0);
+    first_level_.resize( num_hw_threads );
 }
 
 void SimpleTLB::init(unsigned int phase)
@@ -138,6 +141,7 @@ void SimpleTLB::handleMMUEvent( Event* ev ) {
     if( req->isSuccess() ) {
         phys_addr = ((uint64_t) req->getPPN() << page_shift_) | blockOffset( record->virt_addr );
         fillTlbEntry( record->hw_thread_id, vpn, req->getPPN(), req->getPerms() );
+        if ( first_level_entries_ > 0 ) touchFirstLevel( record->hw_thread_id, vpn );
     } else {
         phys_addr = std::numeric_limits<uint64_t>::max();
     }
@@ -198,7 +202,9 @@ void SimpleTLB::getVirtToPhys( RequestID req_id, uint32_t hw_thread_id, uint64_t
 
         dbg_.debug(CALL_INFO,1,0,"hit ppn=%" PRIu32 "\n", entry->ppn() );
         uint64_t phys_addr = entry->ppn() << page_shift_ | blockOffset( virt_addr );
-        self_link_->send( hit_latency_, new SelfEvent( req_id, phys_addr ));
+        uint32_t latency = hit_latency_;
+        if ( first_level_entries_ > 0 && ! touchFirstLevel( hw_thread_id, vpn ) ) latency += first_level_miss_cycles_;
+        self_link_->send( latency, new SelfEvent( req_id, phys_addr ));
 
     } else {
         auto record = new TlbRecord( req_id, hw_thread_id, virt_addr, perms, inst_ptr );
@@ -232,4 +238,7 @@ void SimpleTLB::serialize_order(SST::Core::Serialization::serializer& ser) {
     SST_SER(min_virt_addr_);
     SST_SER(max_virt_addr_);
     SST_SER(waiting_miss_);
+    SST_SER(first_level_entries_);
+    SST_SER(first_level_miss_cycles_);
+    SST_SER(first_level_);
 }

@@ -126,9 +126,11 @@ public:
         { "gp_fp_transfer_extra_cycles", "Cycles a move between a general register and a vector register takes above the latency of the integer unit", "0" },
         { "core_hz", "Core clock, Hz; CNTVCT_EL0 is the cycle count scaled by counter_hz / core_hz", "1000000000" },
         { "timing_classes", "Timing table: one string per class, 'name unit pipe_mask latency issue_interval accumulator_cycles "
-                            "region_out region_in dynamic divide_bits_per_cycle vector'; unit is int, fp, int_div or fp_div, dynamic "
-                            "is fixed or integer_divide, vector is 1 for a class whose result goes to a vector pipe's forwarding "
-                            "network. Empty keeps the latency of each micro-op's functional unit", "[]" },
+                            "region_out region_in dynamic divide_bits_per_cycle vector [accumulator_alternate]'; unit is int, fp, "
+                            "int_div or fp_div, dynamic is fixed or integer_divide, vector is 1 for a class whose result goes to a "
+                            "vector pipe's forwarding network, accumulator_alternate (default 0) is 1 for a class whose late "
+                            "forwarding to the accumulator alternates (VanadisTimingRecord). Empty keeps the latency of each "
+                            "micro-op's functional unit", "[]" },
         { "taken_branches_per_cycle", "Predicted-taken branches the front end follows per cycle; 0 is no limit", "0" },
         { "fetch_window_bytes", "Bytes of an aligned fetch window: a fetch block ends at the end of its window or at a predicted-taken branch", "32" },
         { "fetch_blocks_per_cycle", "Fetch blocks the front end delivers per cycle; 0 is no limit", "0" },
@@ -357,8 +359,10 @@ protected:
         for ( const std::string& row : rows ) {
             char name[64], unit[16], dynamic[32];
             unsigned mask = 0, latency = 0, interval = 0, accumulator = 0, region_out = 0, region_in = 0, bits = 0, vector = 0;
-            if ( 11 != sscanf(row.c_str(), "%63s %15s %u %u %u %u %u %u %31s %u %u", name, unit, &mask, &latency, &interval,
-                            &accumulator, &region_out, &region_in, dynamic, &bits, &vector) ) {
+            unsigned alternate = 0;
+            const int fields = sscanf(row.c_str(), "%63s %15s %u %u %u %u %u %u %31s %u %u %u", name, unit, &mask, &latency,
+                &interval, &accumulator, &region_out, &region_in, dynamic, &bits, &vector, &alternate);
+            if ( 11 != fields && 12 != fields ) {
                 output_->fatal(CALL_INFO, -1, "timing_classes: cannot read '%s'\n", row.c_str());
             }
             uint16_t id = count;
@@ -371,6 +375,7 @@ protected:
             r.pipe_mask = mask;
             r.issue_interval = static_cast<uint16_t>(interval);
             r.accumulator_cycles = static_cast<uint16_t>(accumulator);
+            r.accumulator_alternate = alternate != 0;
             r.region_out = static_cast<uint8_t>(region_out);
             r.region_in = static_cast<uint8_t>(region_in);
             r.divide_bits_per_cycle = static_cast<uint16_t>(bits);

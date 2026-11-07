@@ -40,6 +40,10 @@ struct VanadisTimingRecord
     // Cycles after the issue of the micro-op at which a micro-op that takes its result as an accumulator can issue; 0 is no
     // late forwarding.
     uint16_t accumulator_cycles = 0;
+    // The late forwarding to the accumulator takes accumulator_cycles only when the producer is the last micro-op of such
+    // a class that issued and did not itself take its accumulator that way; otherwise it takes one cycle more. A chain
+    // alone then alternates between the two, and chains in turn take the longer one at every link.
+    bool accumulator_alternate = false;
     // Forwarding regions of a vector-pipe micro-op as a producer and as a consumer, one bit per region; a producer and a
     // consumer that share no region take one more cycle, and a consumer of region 0 takes none. Two micro-ops of the
     // same class forward in the latency of the class.

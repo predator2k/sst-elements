@@ -116,6 +116,12 @@ VanadisNodeOSComponent::VanadisNodeOSComponent(SST::ComponentId_t id, SST::Param
         // this assumes the first page allocated is physical address 0
         auto zero_page = allocPage( );
         // we don't use it
+        const std::string page_order = params.find<std::string>("physical_page_order", "first_free");
+        if ( "random" == page_order ) {
+            phys_mem_mgr_->setRandomOrder( params.find<uint64_t>("physical_page_seed", 1) );
+        } else if ( "first_free" != page_order ) {
+            output_->fatal(CALL_INFO, -1, "physical_page_order must be first_free or random, not '%s'\n", page_order.c_str());
+        }
     }
 
     node_num_ = params.find<int>("node_id", -1);

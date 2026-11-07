@@ -86,6 +86,7 @@ class VanadisInstruction
             accumulator_fp_reg_in_ = NO_ACCUMULATOR;
             accumulator_cycles_   = 0;
             accumulator_ready_cycle_ = 0;
+            fast_accumulate_      = false;
             accumulator_int_reg_in_ = NO_ACCUMULATOR;
             timing_               = nullptr;
             dynamic_cycles_       = 0;
@@ -133,6 +134,7 @@ class VanadisInstruction
             accumulator_fp_reg_in_ = copy_me.accumulator_fp_reg_in_;
             accumulator_cycles_   = copy_me.accumulator_cycles_;
             accumulator_ready_cycle_ = copy_me.accumulator_ready_cycle_;
+            fast_accumulate_      = copy_me.fast_accumulate_;
             accumulator_int_reg_in_ = copy_me.accumulator_int_reg_in_;
             timing_               = copy_me.timing_;
             dynamic_cycles_       = copy_me.dynamic_cycles_;
@@ -466,6 +468,9 @@ class VanadisInstruction
         void setAccumulatorIntRegIn(const uint16_t index) { accumulator_int_reg_in_ = index; }
         uint16_t getAccumulatorIntRegIn() const { return accumulator_int_reg_in_; }
         void setAccumulatorCycles(const uint16_t cycles) { accumulator_cycles_ = cycles; }
+        // Whether the micro-op took its accumulator at the accumulator cycles of its producer (accumulator_alternate).
+        void setFastAccumulate(const bool fast) { fast_accumulate_ = fast; }
+        bool tookFastAccumulate() const { return fast_accumulate_; }
 
         // The timing class of the micro-op, nullptr for the latency of its functional unit.
         const VanadisTimingRecord* getTiming() const { return timing_; }
@@ -550,6 +555,7 @@ class VanadisInstruction
         uint16_t accumulator_fp_reg_in_;
         uint16_t accumulator_cycles_;
         uint64_t accumulator_ready_cycle_;
+        bool fast_accumulate_;
         uint16_t accumulator_int_reg_in_;
         const VanadisTimingRecord* timing_;
         uint16_t dynamic_cycles_;
