@@ -589,8 +589,9 @@ VanadisCore::performRename(const uint32_t hw_thr)
     VanadisCircularQueue<VanadisInstruction*>* thr_rob = rob[hw_thr];
     const size_t rob_size = thr_rob->size();
 
-    for ( uint32_t done = 0; done < renames_per_cycle && renamed_in_rob[hw_thr] < rob_size; ++done ) {
+    for ( uint32_t done = 0; done < renames_per_cycle && renamed_in_rob[hw_thr] < rob_size; ) {
         VanadisInstruction* ins = thr_rob->peekAt(renamed_in_rob[hw_thr]);
+        if ( ! ins->isElementCompanion() ) done++;
 
         // A system call takes the current mappings and pops nothing.
         if ( INST_SYSCALL != ins->getInstFuncType() ) {

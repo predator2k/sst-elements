@@ -147,8 +147,8 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             delete std_mem_handlers_;
         }
 
-        bool storeFull() override { return op_q_size_ >= max_stores_; }
-        bool loadFull() override { return op_q_size_ >= max_loads_; }
+        bool storeFull() override { if (companions_dirty_) { recountCompanions(); companions_dirty_ = false; } return op_q_size_ - op_q_companions_ >= max_stores_; }
+        bool loadFull() override { if (companions_dirty_) { recountCompanions(); companions_dirty_ = false; } return op_q_size_ - op_q_companions_ >= max_loads_; }
         bool storeBufferFull() override { return std_stores_in_flight_.size() >= max_stores_; }
 
         /*
@@ -173,6 +173,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         {
             op_q_[store_me->getHWThread()].push_back( new VanadisBasicStoreEntry(store_me) );
             op_q_size_++;
+            if ( store_me->isElementCompanion() ) op_q_companions_++;
             stat_stores_issued_->addData(1);
         }
 
@@ -197,6 +198,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
             // is left alone
 
             op_q_size_ -= op_q_[thread].size();
+            companions_dirty_ = op_q_companions_ > 0;
             for(auto op_q_itr = op_q_[thread].begin(); op_q_itr != op_q_[thread].end(); ) {
                 delete (*op_q_itr);
                 op_q_itr = op_q_[thread].erase(op_q_itr);
@@ -250,6 +252,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                     delete (*op_q_itr);
                     op_q_itr = op_q_[thread].erase(op_q_itr);
                     op_q_size_--;
+                    companions_dirty_ = op_q_companions_ > 0;
                 } else {
                     ++op_q_itr;
                 }
@@ -1466,6 +1469,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                         delete op_q_[thr].front();
                         op_q_[thr].pop_front();
                         op_q_size_--;
+                        companions_dirty_ = op_q_companions_ > 0;
                         //output_->verbose(CALL_INFO, 16, VANADIS_DBG_LSQ_LOAD_FLG, "--> cycle: %" PRIu64 " issue LOAD succeeded\n", cycle);
                         return true;
                     }
@@ -1501,6 +1505,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                     delete op_q_[thr].front();
                     op_q_[thr].pop_front();
                     op_q_size_--;
+                    companions_dirty_ = op_q_companions_ > 0;
                     return true;
                 } break;
                 case VanadisBasicLoadStoreEntryOp::FENCE:
@@ -1541,6 +1546,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                         delete op_q_[thr].front();
                         op_q_[thr].pop_front();
                         op_q_size_--;
+                        companions_dirty_ = op_q_companions_ > 0;
                         #ifdef VANADIS_BUILD_DEBUG
                         output_->verbose(CALL_INFO, 16, VANADIS_DBG_LSQ_LOAD_FLG, "--> cycle: %" PRIu64 " issue FENCE succeeded\n", cycle);
                         #endif
@@ -1846,6 +1852,18 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
         int op_q_index_; // Next hw_thread to check in op_q queues
         int stores_pending_index_; // Next hw thread to check in stores_pending q's
         size_t op_q_size_; // Total number of loads and stores in all threads' op_q_ queues
+        size_t op_q_companions_ = 0; // Element companions among them (VanadisInstruction::isElementCompanion)
+        bool companions_dirty_ = false; // entries left the queues since op_q_companions_ was counted
+
+        /*
+         * Counts the element companions of the queues again after entries left them.
+         * Handling: scans every thread's queue. Emits nothing.
+         */
+        void recountCompanions()
+        {
+            op_q_companions_ = 0;
+            for (auto& q : op_q_) for (VanadisBasicLoadStoreEntry* e : q) if (e->getInstruction()->isElementCompanion()) op_q_companions_++;
+        }
         size_t stores_pending_size_; // Total number of stores in all threads' stores_pending_ queues
 
         StandardMem* mem_interface_;

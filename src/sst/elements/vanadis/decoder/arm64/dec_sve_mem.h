@@ -175,6 +175,7 @@ VanadisARM64Decoder::sveContigStore(uint64_t addr, VanadisInstructionBundle* bun
             s->m.mode = temp * vector_bytes;
             // contigBase shifts the index by index_shift, kept apart from the chunk size.
             s->index_shift = shift;
+            if ( direct && from != c && timing_given_ && sve_store_companions_ ) s->markElementCompanion();
             add(bundle, s);
         }
     }

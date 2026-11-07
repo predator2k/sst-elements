@@ -95,6 +95,7 @@ class VanadisInstruction
             executed_cycle_       = 0;
             decode_cycle_         = 0;
             rename_cycle_         = 0;
+            element_companion_    = false;
             program_sequence_     = 0;
             end_uop_group_        = false;
             is_front_of_rob_      = false;
@@ -146,6 +147,7 @@ class VanadisInstruction
             executed_cycle_       = copy_me.executed_cycle_;
             decode_cycle_         = copy_me.decode_cycle_;
             rename_cycle_         = copy_me.rename_cycle_;
+            element_companion_    = copy_me.element_companion_;
             program_sequence_     = copy_me.program_sequence_;
             end_uop_group_        = copy_me.end_uop_group_;
             is_front_of_rob_      = false;
@@ -502,6 +504,10 @@ class VanadisInstruction
         uint64_t getDecodeCycle() const { return decode_cycle_; }
         void setRenameCycle(const uint64_t cycle) { rename_cycle_ = cycle; }
         uint64_t getRenameCycle() const { return rename_cycle_; }
+        // An element micro-op of a vector store after the first of its chunk: it writes only the elements a gap in the
+        // predicate leaves to it, and the core counts it neither against the rename width nor against the queue of the LSQ.
+        void markElementCompanion() { element_companion_ = true; }
+        bool isElementCompanion() const { return element_companion_; }
         // With rename_at_dispatch the program order of every micro-op, from 1: a flush at a branch removes the larger ones.
         void setProgramSequence(const uint64_t sequence) { program_sequence_ = sequence; }
         uint64_t getProgramSequence() const { return program_sequence_; }
@@ -578,6 +584,7 @@ class VanadisInstruction
         uint64_t executed_cycle_;
         uint64_t decode_cycle_;
         uint64_t rename_cycle_;
+        bool element_companion_;
         uint64_t program_sequence_;
         bool end_uop_group_;
         bool is_front_of_rob_;

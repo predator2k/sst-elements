@@ -119,6 +119,7 @@ public:
         { "vector_bytes", "SVE vector length in bytes: a multiple of 16 from 16 to 256; 16 with no SVE", "16" },
         { "dczid_block_bytes", "Block size DC ZVA zeroes and DCZID_EL0 reports, bytes (a power of two)", "64" },
         { "structure_permute_micro_ops", "With a timing table, a load or store of N-element structures (ASIMD LD2 to LD4, ST2 to ST4; SVE LD2 to LD4, ST2 to ST4) has N permute micro-ops of class v_struct_permute in the vector pipes, the merge of an SVE structure load among them; false is one permute micro-op for ASIMD and an SVE merge of class int_internal", "false" },
+        { "sve_store_companions", "With a timing table, the element micro-ops of an SVE contiguous store after the first of each chunk take no rename slot and no place in the queue of the load-store queue; false counts them as other micro-ops", "false" },
         { "vector_store_data_micro_ops", "With a timing table, a store of vector registers has a store-data micro-op of class v_store_data that reads the first stored register and writes nothing, so it takes a vector pipe; false is none", "false" },
         { "counter_hz", "Frequency CNTFRQ_EL0 reports and CNTVCT_EL0 counts at, Hz", "1000000000" },
         { "integer_mul_extra_cycles", "Cycles a scalar integer multiply takes above the latency of the integer unit", "0" },
@@ -149,6 +150,7 @@ public:
         dczid_block_bytes = params.find<uint32_t>("dczid_block_bytes", 64);
         structure_permute_micro_ops_ = params.find<bool>("structure_permute_micro_ops", false);
         vector_store_data_micro_ops_ = params.find<bool>("vector_store_data_micro_ops", false);
+        sve_store_companions_ = params.find<bool>("sve_store_companions", false);
         counter_hz        = params.find<uint64_t>("counter_hz", 1000000000ull);
         integer_mul_extra_cycles = params.find<uint16_t>("integer_mul_extra_cycles", 0);
         fp_mul_extra_cycles      = params.find<uint16_t>("fp_mul_extra_cycles", 0);
@@ -326,6 +328,7 @@ protected:
     // structure_permute_micro_ops and vector_store_data_micro_ops (the parameters).
     bool                         structure_permute_micro_ops_ = false;
     bool                         vector_store_data_micro_ops_ = false;
+    bool                         sve_store_companions_ = false;
     uint64_t                     counter_hz;
     uint16_t                     integer_mul_extra_cycles;
     uint16_t                     fp_mul_extra_cycles;
