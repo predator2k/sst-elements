@@ -24,6 +24,9 @@
 #include "decoder/varm64decoder.h"
 
 #include "os/resp/vosexitresp.h"
+#include "os/vdevicemap.h"
+
+#include <typeinfo>
 
 #include <cstdio>
 #include <sst/core/output.h>
@@ -126,6 +129,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
         else output->fatal(CALL_INFO, -1, "Error: younger_loads_after_acquire is %s; it must be unchecked, wait or speculate\n", order.c_str());
     }
     check_load_order = params.find<bool>("check_load_order", false);
+    device_loads_in_order = params.find<bool>("device_loads_in_order", false);
     rob_instruction_limit = params.find<uint32_t>("reorder_instructions", 0);
     queue_entries[QUEUE_INTEGER] = params.find<uint32_t>("integer_queue_entries", 0);
     queue_entries[QUEUE_FP] = params.find<uint32_t>("fp_queue_entries", 0);
@@ -757,6 +761,50 @@ VanadisCore::onLineInvalidated(const uint64_t address, const uint64_t size)
     }
 }
 
+/*
+ * The node OS mapped a device at [address, address + length) of the process, or unmapped the range.
+ * Handling: a mapping adds the range; an unmapping removes it from every range it overlaps (the parts outside stay).
+ * Emits nothing.
+ */
+void
+VanadisCore::onDeviceMap(const uint64_t address, const uint64_t length, const bool mapped)
+{
+    const uint64_t end = address + length;
+    if ( mapped ) {
+        device_ranges[address] = end;
+        return;
+    }
+    std::map<uint64_t, uint64_t> kept;
+    for ( const auto& r : device_ranges ) {
+        if ( r.second <= address || end <= r.first ) {
+            kept[r.first] = r.second;
+            continue;
+        }
+        if ( r.first < address ) kept[r.first] = address;
+        if ( end < r.second ) kept[end] = r.second;
+    }
+    device_ranges.swap(kept);
+}
+
+/*
+ * Whether a load whose address registers are ready reads Device memory. Only a plain load (the base load class) is
+ * checked: its address is the base register plus the offset, which computing here does not change. Emits nothing.
+ */
+bool
+VanadisCore::isDeviceLoad(VanadisInstruction* ins, const uint32_t hw_thr)
+{
+    if ( device_ranges.empty() || typeid(*ins) != typeid(VanadisLoadInstruction) ) return false;
+    VanadisLoadInstruction* load = dynamic_cast<VanadisLoadInstruction*>(ins);
+    if ( nullptr == load ) return false;
+    uint64_t address = 0;
+    uint16_t width = 0;
+    load->computeLoadAddress(output, register_files[hw_thr], &address, &width);
+    auto it = device_ranges.upper_bound(address + (width ? width : 1) - 1);
+    if ( it == device_ranges.begin() ) return false;
+    --it;
+    return address < it->second;
+}
+
 bool
 VanadisCore::loadWaitsForLoads(const VanadisInstruction* load) const
 {
@@ -896,8 +944,12 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
             order_allows = 0 == ( unallocated_memory_op_seen & ~( plain_store ? INCOMPLETE_ACQUIRE : 0 ) );
         }
 
+        // A load to Device memory is not speculative (device_loads_in_order): it issues only at the front of the reorder
+        // buffer, when every older instruction has retired.
+        const bool device_load_waits = device_loads_in_order && INST_LOAD == ins_type && 0 != j && ! device_ranges.empty()
+            && inputValuesReady(ins, false) && isDeviceLoad(ins, hwThr);
         const bool can_issue = ( INST_SYSCALL == ins_type || inputValuesReady(ins, false) ) && order_allows
-            && ! ( ins->isSerializing() && 0 != j );
+            && ! ( ins->isSerializing() && 0 != j ) && ! device_load_waits;
 
         const VanadisTimingRecord* timing = ins->getTiming();
         if ( can_issue && nullptr != timing && timing->dynamic != VanadisTimingDynamic::FIXED ) {
@@ -2965,8 +3017,11 @@ void VanadisCore::recvOSEvent(SST::Event* ev) {
         dumpRegs(req);
     } else { // Case 8
 
+    VanadisDeviceMapEvent* map = dynamic_cast<VanadisDeviceMapEvent*>(ev);
     VanadisCheckpointReq* req = dynamic_cast<VanadisCheckpointReq*>(ev);
-    if ( nullptr != req ) {
+    if ( nullptr != map ) {
+        onDeviceMap(map->getAddress(), map->getLength(), map->isMapped());
+    } else if ( nullptr != req ) {
         #ifdef VANADIS_BUILD_DEBUG
         output->verbose(CALL_INFO, 0, VANADIS_DBG_CHECKPOINT,
             " checkpoing core=%d thread=%d checkpointing\n", req->coreId, req->hwThread );

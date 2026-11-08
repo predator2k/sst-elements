@@ -36,6 +36,7 @@
 
 #include <array>
 #include <limits>
+#include <map>
 #include <set>
 #include <sst/core/component.h>
 #include <sst/core/interfaces/stdMem.h>
@@ -138,6 +139,7 @@ public:
         { "stores_out_of_order", "With stores_pass_loads, a plain store also issues ahead of older plain stores that have not issued (its address registers are ready first); the load-store queue keeps its stores in program order. False keeps stores in program order at issue", "false"},
         { "younger_loads_after_acquire", "With rename_at_dispatch, the order of the loads of a thread that are younger than a Load-Acquire or Load-AcquirePC of that thread which has not completed (the decoder marks them, acquire_release_one_way): unchecked adds no order of its own, as before (the fences of the decoder give it); wait holds them, and every younger ordered memory operation, until the acquire load has its data; speculate lets them read, and an invalidation notice of the data cache (snoop_l1_invalidations of memHierarchy, physical_address_in_responses of the memory interface) for a line one of them read squashes it and fetches its instruction again", "unchecked"},
         { "stores_pass_loads", "With rename_at_dispatch, a plain store issues to the load-store queue ahead of older plain loads that have not issued, when the store buffer has room for it; false waits for every older memory operation", "false"},
+        { "device_loads_in_order", "With rename_at_dispatch, a load to Device memory (a range the node OS reports as a device mapping, VanadisDeviceMapEvent) issues only at the front of the reorder buffer: it is not speculative and the Device accesses of a thread reach memory in program order (Arm ARM DDI 0487, B2.7.2); stores already leave in program order at the front; false issues such a load as any other, as before", "false"},
         { "check_load_order", "With rename_at_dispatch, a load that read other values than an older load of its thread to the same bytes that reads later is an order violation and is fetched again (the coherence order of reads of one location, which another core, hardware thread or device can break); false does not compare, as before", "false"},
         { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },
@@ -406,6 +408,11 @@ private:
     bool stores_out_of_order = false;
     // check_load_order.
     bool check_load_order = false;
+    // device_loads_in_order, and the Device ranges of the process: first virtual address to the address after the range.
+    bool device_loads_in_order = false;
+    std::map<uint64_t, uint64_t> device_ranges;
+    void onDeviceMap(uint64_t address, uint64_t length, bool mapped);
+    bool isDeviceLoad(VanadisInstruction* ins, uint32_t hw_thr);
     uint32_t rob_instruction_limit = 0;
     // The issue queues of the integer and the floating-point units: their sizes and the renamed micro-ops waiting in them.
     enum IssueQueue : uint8_t { QUEUE_NONE = 0, QUEUE_INTEGER = 1, QUEUE_FP = 2 };

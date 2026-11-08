@@ -44,6 +44,8 @@ public:
         }
 
         m_os->getMMU()->unmap( process->getpid(), address >> m_os->getPageShift(), length/m_os->getPageSize() );
+        // An unmapped range is no longer a device's (a core holds no Device range there afterwards).
+        m_os->broadcastDeviceMap( address, length, false );
 
         int ret = 0;
         if ( m_os->mmapFixedReplace() ) {

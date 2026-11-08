@@ -109,6 +109,8 @@ public:
         if ( m_os->mmapFixedReplace() ) {
             bool fixed = flags & MAP_FIXED;
             if ( fixed ) {
+                // A replaced range is no longer a device's.
+                m_os->broadcastDeviceMap( address, length, false );
                 // The replaced pages leave the page table and every TLB of the process.
                 for ( const auto iter : m_process->getThreadList() ) {
                     if ( iter.second ) {
@@ -126,6 +128,8 @@ public:
         if ( 0 == addr ) {
             setReturnFail( -ENOMEM );
         } else {
+            // The pages of a device are Device memory: every core learns the range before this thread can use it.
+            if ( dev ) m_os->broadcastDeviceMap( addr, length, true );
             setReturnSuccess( addr );
         }
     }

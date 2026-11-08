@@ -7,4 +7,5 @@ RDBAH reads back                             ok
 RDLEN reads back                             ok
 RDT reads back                               ok
 RDH is 0                                     ok
+STATUS read in 33 of 64 rounds, LU set in 33
 done
