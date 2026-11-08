@@ -679,6 +679,11 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                     }
                     #endif
 
+                    if ( ! load_ins->trapsError() && ! ev->data.empty() ) {
+                        if ( lsq_->load_data_listener_ ) lsq_->load_data_listener_(load_ins, ev->vAddr, ev->data.data(), ev->data.size());
+                        load_ins->noteReadBytes(ev->vAddr, ev->data.data(), ev->data.size());
+                    }
+
                     switch(load_ins->getValueRegisterType()) {
                     case LOAD_INT_REGISTER: {
 
@@ -1869,6 +1874,7 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
 
                 forwarded_loads_.push_back({ current_cycle_ + store_forward_cycles_, thread, response });
                 load_ins->markReadFromStore();
+                load_ins->setForwardedFrom(store_ins->getMemorySequence());
                 stat_loads_forwarded_->addData(1);
                 return true;
             }

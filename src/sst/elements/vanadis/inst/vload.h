@@ -250,6 +250,32 @@ public:
         return phys_read_high_ != 0 && phys_read_low_ < line_address + line_bytes && line_address < phys_read_high_;
     }
 
+    // The bytes the load read (from memory or from a store), recorded as its answers arrive, so that an older load to the
+    // same bytes that reads later can compare its values with them (check_load_order of the core: the coherence order of
+    // reads of one location). Loads of more than READ_BYTES_MAX bytes are not recorded.
+    static constexpr uint64_t READ_BYTES_MAX = 64;
+    void noteReadBytes(const uint64_t address, const uint8_t* data, const uint64_t size)
+    {
+        if ( access_width == 0 || access_width > READ_BYTES_MAX ) return;
+        for ( uint64_t i = 0; i < size; ++i ) {
+            const uint64_t a = address + i;
+            if ( a < access_address || a >= access_address + access_width ) continue;
+            read_bytes_[a - access_address] = data[i];
+            read_valid_ |= 1ull << (a - access_address);
+        }
+    }
+    // Whether the load holds the byte at address, and its value.
+    bool readByte(const uint64_t address, uint8_t* value) const
+    {
+        if ( address < access_address || address >= access_address + access_width || access_width > READ_BYTES_MAX ) return false;
+        if ( ! (read_valid_ & (1ull << (address - access_address))) ) return false;
+        *value = read_bytes_[address - access_address];
+        return true;
+    }
+    // The load took its bytes from the store with this memory sequence (0: from memory).
+    void     setForwardedFrom(const uint64_t store_sequence) { forwarded_from_ = store_sequence; }
+    uint64_t getForwardedFrom() const { return forwarded_from_; }
+
 protected:
     bool shares_load_port_ = false;
     // markAcquire, markAcquirePC.
@@ -262,6 +288,10 @@ protected:
     // notePhysicalRead.
     uint64_t phys_read_low_ = 0;
     uint64_t phys_read_high_ = 0;
+    // noteReadBytes, setForwardedFrom.
+    uint8_t  read_bytes_[READ_BYTES_MAX] = {};
+    uint64_t read_valid_ = 0;
+    uint64_t forwarded_from_ = 0;
 
     uint64_t access_address = 0;
     uint64_t access_width = 0;

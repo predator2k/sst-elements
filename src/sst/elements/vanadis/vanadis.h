@@ -138,6 +138,7 @@ public:
         { "stores_out_of_order", "With stores_pass_loads, a plain store also issues ahead of older plain stores that have not issued (its address registers are ready first); the load-store queue keeps its stores in program order. False keeps stores in program order at issue", "false"},
         { "younger_loads_after_acquire", "With rename_at_dispatch, the order of the loads of a thread that are younger than a Load-Acquire or Load-AcquirePC of that thread which has not completed (the decoder marks them, acquire_release_one_way): unchecked adds no order of its own, as before (the fences of the decoder give it); wait holds them, and every younger ordered memory operation, until the acquire load has its data; speculate lets them read, and an invalidation notice of the data cache (snoop_l1_invalidations of memHierarchy, physical_address_in_responses of the memory interface) for a line one of them read squashes it and fetches its instruction again", "unchecked"},
         { "stores_pass_loads", "With rename_at_dispatch, a plain store issues to the load-store queue ahead of older plain loads that have not issued, when the store buffer has room for it; false waits for every older memory operation", "false"},
+        { "check_load_order", "With rename_at_dispatch, a load that read other values than an older load of its thread to the same bytes that reads later is an order violation and is fetched again (the coherence order of reads of one location, which another core, hardware thread or device can break); false does not compare, as before", "false"},
         { "rename_at_dispatch", "Rename registers in program order when an instruction enters the reorder buffer, and issue a consumer when its producer has executed. False renames at issue and waits for the producer to retire. For a decoder that never writes its zero register", "false"},
         { "physical_integer_registers", "Number of physical integer registers per hardware thread", "128" },
         { "physical_fp_registers", "Number of physical floating point registers per hardware thread", "128" },
@@ -180,7 +181,7 @@ public:
         { "instructions_retired", "Number of instructions retired", "instructions", 1 },
         { "instructions_decoded", "Number of instructions decoded", "instructions", 1 },
         { "branch_mispredicts", "Number of retired branches which were mis-predicted", "instructions", 1 },
-        { "memory_order_violations", "Loads that read before an older store knew its address", "events", 1 },
+        { "memory_order_violations", "Loads that read before an older store knew its address, or before an older load to the same bytes", "events", 1 },
         { "acquire_order_violations", "Loads squashed because a line they read before an older Load-Acquire of their thread completed was invalidated (younger_loads_after_acquire speculate)", "events", 1 },
         { "first_fault_refetches", "First-fault or non-fault loads whose predicted FFR a fault proved wrong, after which the following instructions were fetched again (first_fault_ffr_predict of the decoder)", "events", 1 },
         { "branches", "Number of retired branches", "instructions", 1 },
@@ -358,6 +359,11 @@ private:
     static constexpr uint64_t LOAD_WAIT_CLEAR_CYCLES = 1048576;
     void onStoreAddressKnown(const VanadisInstruction* store, const uint64_t address, const uint64_t width);
     bool loadWaitsForStores(const VanadisInstruction* load) const;
+    // Per load address (as load_waits_for_stores): the load was caught holding older values than an older load to the
+    // same bytes, so it no longer passes older loads that have not issued.
+    std::vector<uint8_t> load_waits_for_loads;
+    void onLoadData(const VanadisInstruction* load, const uint64_t address, const uint8_t* data, const uint64_t size);
+    bool loadWaitsForLoads(const VanadisInstruction* load) const;
 
     // rename_at_dispatch: what older memory operations have not issued this cycle.
     static constexpr int UNISSUED_LOAD = 1;
@@ -398,6 +404,8 @@ private:
     // stores_pass_loads: plain stores issue ahead of older plain loads.
     bool stores_pass_loads = false;
     bool stores_out_of_order = false;
+    // check_load_order.
+    bool check_load_order = false;
     uint32_t rob_instruction_limit = 0;
     // The issue queues of the integer and the floating-point units: their sizes and the renamed micro-ops waiting in them.
     enum IssueQueue : uint8_t { QUEUE_NONE = 0, QUEUE_INTEGER = 1, QUEUE_FP = 2 };
