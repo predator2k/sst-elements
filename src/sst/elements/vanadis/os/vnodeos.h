@@ -26,6 +26,7 @@
 #include "os/include/hwThreadID.h"
 #include "os/voscallev.h"
 #include "os/vstartthreadreq.h"
+#include "os/vdevicemap.h"
 #include "os/vappruntimememory.h"
 #include "os/vphysmemmanager.h"
 #include "os/include/process.h"
@@ -322,6 +323,14 @@ public:
 
     void sendEvent( uint32_t core, SST::Event* ev ) {
         core_links_.at(core)->send( ev );
+    }
+
+    // Tells every core that [address, address + length) of the process maps a device (mapped) or was unmapped: the
+    // cores keep loads to Device memory non-speculative (device_loads_in_order of vanadis.core).
+    void broadcastDeviceMap( uint64_t address, uint64_t length, bool mapped ) {
+        for ( SST::Link* link : core_links_ ) {
+            link->send( new VanadisDeviceMapEvent( address, length, mapped ) );
+        }
     }
 
     void setProcess( uint32_t core, uint32_t hw_thread,  OS::ProcessInfo* process ) {

@@ -329,6 +329,7 @@ os/vdumpregsreq.h \
 os/velfloader.cc \
 os/velfloader.h \
 os/vgetthreadstate.h \
+os/vdevicemap.h \
 os/vloadpage.cc \
 os/vloadpage.h \
 os/vmipscpuos.h \
