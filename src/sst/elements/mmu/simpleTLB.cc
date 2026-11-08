@@ -102,6 +102,26 @@ SimpleTLB::SimpleTLB(SST::ComponentId_t id, SST::Params& params) : TLB(id,params
     first_level_entries_ = params.find<uint32_t>("first_level_entries", 0);
     first_level_miss_cycles_ = params.find<uint32_t>("first_level_miss_cycles", 0);
     first_level_.resize( num_hw_threads );
+    page_delivery_.resize( num_hw_threads );
+    cycle_factor_ = getTimeConverter( clock ).getFactor();
+}
+
+uint32_t SimpleTLB::inPageOrder( uint32_t hw_thread_id, uint32_t vpn, uint32_t latency )
+{
+    const SimTime_t now = getCurrentSimCycle();
+    SimTime_t at = now + latency * cycle_factor_;
+    auto& last = page_delivery_[ hw_thread_id ];
+    auto it = last.find( vpn );
+    if ( it != last.end() && it->second > at ) {
+        latency += ( it->second - at + cycle_factor_ - 1 ) / cycle_factor_;
+        at = now + latency * cycle_factor_;
+    }
+    last[ vpn ] = at;
+    // Only translations still on their way matter; the others are dropped once the map grows.
+    if ( last.size() > page_delivery_prune_ ) {
+        for ( auto i = last.begin(); i != last.end(); ) i = ( i->second <= now ) ? last.erase( i ) : std::next( i );
+    }
+    return latency;
 }
 
 void SimpleTLB::init(unsigned int phase)
@@ -203,7 +223,10 @@ void SimpleTLB::getVirtToPhys( RequestID req_id, uint32_t hw_thread_id, uint64_t
         dbg_.debug(CALL_INFO,1,0,"hit ppn=%" PRIu32 "\n", entry->ppn() );
         uint64_t phys_addr = ((uint64_t) entry->ppn() << page_shift_) | blockOffset( virt_addr );
         uint32_t latency = hit_latency_;
-        if ( first_level_entries_ > 0 && ! touchFirstLevel( hw_thread_id, vpn ) ) latency += first_level_miss_cycles_;
+        if ( first_level_entries_ > 0 ) {
+            if ( ! touchFirstLevel( hw_thread_id, vpn ) ) latency += first_level_miss_cycles_;
+            latency = inPageOrder( hw_thread_id, vpn, latency );
+        }
         self_link_->send( latency, new SelfEvent( req_id, phys_addr ));
 
     } else {
@@ -241,4 +264,6 @@ void SimpleTLB::serialize_order(SST::Core::Serialization::serializer& ser) {
     SST_SER(first_level_entries_);
     SST_SER(first_level_miss_cycles_);
     SST_SER(first_level_);
+    SST_SER(page_delivery_);
+    SST_SER(cycle_factor_);
 }

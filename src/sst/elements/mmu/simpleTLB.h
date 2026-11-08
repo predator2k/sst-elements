@@ -171,6 +171,12 @@ class SimpleTLB : public TLB {
      * Handling: a hit moves the page to the front; a miss puts it at the front and drops the least recently used page
      * when the level is full. Emits nothing. Returns whether the page was there.
      */
+    // With a first level, a first-level miss of a page takes first_level_miss_cycles more than a later hit on the
+    // entry it filled, so the later translation would reach the cache first. A translation of a page is delivered no
+    // earlier than the one of the same page before it, so the accesses of a page keep their order (same-address loads
+    // in coherence order, a load after a store that left the store queue). Returns the latency in cycles.
+    uint32_t inPageOrder( uint32_t hw_thread_id, uint32_t vpn, uint32_t latency );
+
     bool touchFirstLevel( uint32_t hw_thread_id, uint32_t vpn ) {
         auto& level = first_level_[ hw_thread_id ];
         auto found = std::find( level.begin(), level.end(), vpn );
@@ -275,6 +281,13 @@ class SimpleTLB : public TLB {
     uint32_t first_level_entries_ = 0;
     uint32_t first_level_miss_cycles_ = 0;
     std::vector< std::vector<uint32_t> > first_level_;
+    //! With a first level, the time (core time base) at which the last translation of each page of each thread is
+    //! delivered: a translation that would finish earlier waits for it (inPageOrder()).
+    std::vector< std::map<uint32_t, SimTime_t> > page_delivery_;
+    //! Core time units per cycle of the TLB's clock.
+    SimTime_t cycle_factor_ = 1;
+    //! Size of a thread's page_delivery_ map above which the delivered entries are removed.
+    static constexpr size_t page_delivery_prune_ = 64;
 };
 
 } //namespace MMU_Lib

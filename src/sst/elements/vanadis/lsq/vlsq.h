@@ -94,6 +94,12 @@ public:
     // Told each invalidation notice of the memory system: the physical address and size of the line the data cache lost
     // (younger_loads_after_acquire speculate of the core).
     void setInvalidationListener(std::function<void(uint64_t, uint64_t)> listener) { invalidation_listener_ = std::move(listener); }
+    // Called with every answer to a load (from memory or from a store): its address and bytes. The core finds a younger
+    // load to those bytes that read other values before it (the coherence order of reads of one location).
+    void setLoadDataListener(std::function<void(const VanadisInstruction*, uint64_t, const uint8_t*, uint64_t)> listener)
+    {
+        load_data_listener_ = std::move(listener);
+    }
 
     void setCoreId( int core ) { core_id_ = core; }
     int getCoreId( ) { return core_id_; }
@@ -187,6 +193,7 @@ protected:
     std::function<bool(const VanadisInstruction*)> store_data_ready_;
     std::function<void(const VanadisInstruction*, uint64_t, uint64_t)> store_address_listener_;
     std::function<void(uint64_t, uint64_t)> invalidation_listener_;
+    std::function<void(const VanadisInstruction*, uint64_t, const uint8_t*, uint64_t)> load_data_listener_;
     SST::Output* output_;
 };
 

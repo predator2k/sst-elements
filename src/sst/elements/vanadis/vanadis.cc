@@ -125,6 +125,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
         else if ( order == "speculate" ) younger_loads_after_acquire = YoungerLoadsAfterAcquire::SPECULATE;
         else output->fatal(CALL_INFO, -1, "Error: younger_loads_after_acquire is %s; it must be unchecked, wait or speculate\n", order.c_str());
     }
+    check_load_order = params.find<bool>("check_load_order", false);
     rob_instruction_limit = params.find<uint32_t>("reorder_instructions", 0);
     queue_entries[QUEUE_INTEGER] = params.find<uint32_t>("integer_queue_entries", 0);
     queue_entries[QUEUE_FP] = params.find<uint32_t>("fp_queue_entries", 0);
@@ -138,6 +139,7 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
     acquire_violation_sequence.assign(hw_threads, 0);
     last_retired_address.assign(hw_threads, 0);
     load_waits_for_stores.assign(LOAD_WAIT_TABLE_ENTRIES, 0);
+    load_waits_for_loads.assign(LOAD_WAIT_TABLE_ENTRIES, 0);
 
     output->verbose(
         CALL_INFO, 2, 0,
@@ -312,6 +314,11 @@ VanadisCore::VanadisCore(SST::ComponentId_t id, SST::Params& params) : Component
         });
         if ( YoungerLoadsAfterAcquire::SPECULATE == younger_loads_after_acquire ) {
             lsq->setInvalidationListener([this](const uint64_t address, const uint64_t size) { onLineInvalidated(address, size); });
+        }
+        if ( check_load_order ) {
+            lsq->setLoadDataListener([this](const VanadisInstruction* load, const uint64_t address, const uint8_t* data, const uint64_t size) {
+                onLoadData(load, address, data, size);
+            });
         }
     }
 
@@ -750,6 +757,61 @@ VanadisCore::onLineInvalidated(const uint64_t address, const uint64_t size)
     }
 }
 
+bool
+VanadisCore::loadWaitsForLoads(const VanadisInstruction* load) const
+{
+    return load_waits_for_loads[(load->getInstructionAddress() >> 2) & (LOAD_WAIT_TABLE_ENTRIES - 1)] != 0;
+}
+
+/*
+ * An answer to a load gives the bytes at [address, address + size): a younger load of its thread that already holds other
+ * values for some of those bytes read them before this load and before another core or hardware thread wrote them, which
+ * the coherence order of reads of one location forbids. The oldest such load is an order violation, as a load that read
+ * before an older store knew its address (onStoreAddressKnown): it and everything after it are fetched again, and its
+ * address no longer passes older loads that have not issued. Equal values are no violation (the same values are also an
+ * allowed outcome), so a thread alone never replays a load. A younger load that took its bytes from a store younger than
+ * this load, and the micro-ops of one instruction, are not compared. Emits nothing.
+ */
+void
+VanadisCore::onLoadData(const VanadisInstruction* load, const uint64_t address, const uint8_t* data, const uint64_t size)
+{
+    const uint32_t thr = load->getHWThread();
+    VanadisCircularQueue<VanadisInstruction*>* thr_rob = rob[thr];
+    bool past_load = false;
+    bool other_instruction = false;
+    for ( size_t i = 0; i < thr_rob->size(); ++i ) {
+        VanadisInstruction* ins = thr_rob->peekAt(i);
+        if ( ! past_load ) {
+            if ( ins == load ) {
+                past_load = true;
+                other_instruction = ins->endsMicroOpGroup();
+            }
+            continue;
+        }
+        if ( other_instruction && INST_LOAD == ins->getInstFuncType() && ins->getMemorySequence() > load->getMemorySequence() ) {
+            const VanadisLoadInstruction* younger = dynamic_cast<VanadisLoadInstruction*>(ins);
+            if ( younger->getForwardedFrom() <= load->getMemorySequence() ) {
+                bool differs = false;
+                for ( uint64_t k = 0; k < size && ! differs; ++k ) {
+                    uint8_t held;
+                    if ( younger->readByte(address + k, &held) && held != data[k] ) differs = true;
+                }
+                if ( differs ) {
+                    if ( ! has_order_violation[thr] || younger->getMemorySequence() < violating_load_sequence[thr] ) {
+                        has_order_violation[thr] = 1;
+                        violating_load_address[thr] = younger->getInstructionAddress();
+                        violating_load_sequence[thr] = younger->getMemorySequence();
+                    }
+                    load_waits_for_loads[(younger->getInstructionAddress() >> 2) & (LOAD_WAIT_TABLE_ENTRIES - 1)] = 1;
+                    stat_order_violations->addData(1);
+                    return;
+                }
+            }
+        }
+        if ( ins->endsMicroOpGroup() ) other_instruction = true;
+    }
+}
+
 void
 VanadisCore::onStoreAddressKnown(const VanadisInstruction* store, const uint64_t address, const uint64_t width)
 {
@@ -818,7 +880,8 @@ VanadisCore::performIssueRenamed(const uint64_t cycle, const int hwThr, uint32_t
         bool order_allows = true;
         if ( plain_load ) {
             order_allows = ! ( unallocated_memory_op_seen & ( UNISSUED_ORDERED | INCOMPLETE_ACQUIRE ) )
-                && ! ( ( unallocated_memory_op_seen & UNISSUED_STORE ) && loadWaitsForStores(ins) );
+                && ! ( ( unallocated_memory_op_seen & UNISSUED_STORE ) && loadWaitsForStores(ins) )
+                && ! ( ( unallocated_memory_op_seen & UNISSUED_LOAD ) && loadWaitsForLoads(ins) );
         }
         else if ( plain_store && stores_pass_loads ) {
             // A store need not wait for older plain loads: it never gives them its bytes, and the load-store queue orders
@@ -1954,7 +2017,10 @@ VanadisCore::tick(SST::Cycle_t cycle)
 
     if ( rename_at_dispatch ) {
         issue_stage_cycle = cycle;
-        if ( 0 == cycle % LOAD_WAIT_CLEAR_CYCLES ) std::fill(load_waits_for_stores.begin(), load_waits_for_stores.end(), 0);
+        if ( 0 == cycle % LOAD_WAIT_CLEAR_CYCLES ) {
+            std::fill(load_waits_for_stores.begin(), load_waits_for_stores.end(), 0);
+            std::fill(load_waits_for_loads.begin(), load_waits_for_loads.end(), 0);
+        }
         // The thread that renames first takes the free physical registers and issue-queue entries, so the first one
         // changes every cycle (with one hardware thread this is the old order).
         for ( uint32_t k = 0; k < hw_threads; ++k ) {
