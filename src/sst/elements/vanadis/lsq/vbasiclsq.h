@@ -797,12 +797,14 @@ class VanadisBasicLoadStoreQueue : public SST::Vanadis::VanadisLoadStoreQueue
                 /*
                  * An invalidation notice: the data cache lost a line (another agent wrote it, or it was evicted). It
                  * reaches the core only when the cache has snoop_l1_invalidations.
-                 * Handling: counts it and tells the core the physical address and size of the line. Emits nothing.
+                 * Handling: counts it and tells the core the physical address of the line and the line size (the notice
+                 * of memHierarchy's MESI L1 carries the line's address and a size of 0). Emits nothing.
                  */
                 virtual void handle(StandardMem::InvNotify* ev) override
                 {
                     lsq_->stat_invalidations_->addData(1);
-                    if ( lsq_->invalidation_listener_ ) lsq_->invalidation_listener_(ev->pAddr, ev->size);
+                    const uint64_t line = lsq_->cache_line_width_;
+                    if ( lsq_->invalidation_listener_ ) lsq_->invalidation_listener_(ev->pAddr - (ev->pAddr % line), line);
                     delete ev;
                 }
 
