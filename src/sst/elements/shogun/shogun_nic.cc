@@ -239,10 +239,17 @@ void ShogunNIC::recvLinkEvent(SST::Event* ev)
             exit(-1);
         }
 
-        reqQ->push(inEv->getPayload());
+        SimpleNetwork::Request* payload = inEv->getPayload();
+        reqQ->push(payload);
+
+        // The request now belongs to the receive queue; the event shell is deleted here, after its payload is
+        // unlinked (~ShogunEvent deletes a linked payload). Without this every delivered message leaked one
+        // ShogunEvent from the SST memory pool.
+        inEv->unlinkPayload();
+        delete inEv;
 
         if (nullptr != onRecvFunctor) {
-            if (!(*onRecvFunctor)(inEv->getPayload()->vn)) {
+            if (!(*onRecvFunctor)(payload->vn)) {
                 onRecvFunctor = nullptr;
             }
         }

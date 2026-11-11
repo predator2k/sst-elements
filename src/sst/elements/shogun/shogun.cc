@@ -313,6 +313,9 @@ void ShogunComponent::handleIncoming(SST::Event* event)
 
             output->verbose(CALL_INFO, 4, 0, "-> recv-credit from %" PRIi32 "\n", src_port);
             remote_output_slots[src_port]++;
+            // A credit carries only its source port; without this delete every credit leaked one
+            // ShogunCreditEvent from the SST memory pool.
+            delete creditEv;
         } else {
             output->fatal(CALL_INFO, -1, "Error: received a non-shogun compatible event.\n");
         }
