@@ -82,7 +82,7 @@ public:
 #define MEMCONTROLLER_ELI_SUBCOMPONENTSLOTS {"backend", "Backend memory model to use for timing. Defaults to simpleMem", "SST::MemHierarchy::MemBackend"},\
             {"customCmdHandler", "Optional handler for custom command types", "SST::MemHierarchy::CustomCmdMemHandler"}, \
             {"listener", "Optional listeners to gather statistics, create traces, etc. Multiple listeners supported.", "SST::MemHierarchy::CacheListener"}, \
-            {"highlink", "CPU-side port manager (e.g., link to caches/cpu). If used, do not connect the 'highlink' port and connect the subcomponent's port(s) instead. Defaults to 'memHierarchy.MemLink' if the 'highlink' port is used instead.", "SST::MemHierarchy.MemLinkBase"},\
+            {"highlink", "CPU-side port manager (e.g., link to caches/cpu). If used, do not connect the 'highlink' port and connect the subcomponent's port(s) instead. Defaults to 'memHierarchy.MemLink' if the 'highlink' port is used instead.", "SST::MemHierarchy::MemLinkBase"},\
             {"cpulink", "DEPRECATED: Renamed to 'highlink' for naming consistency. CPU-side link manager (e.g., towards caches/cpu). A common setting for network connections is 'memHierarchy.MemNIC'.", "SST::MemHierarchy::MemLinkBase"}
 
     SST_ELI_DOCUMENT_SUBCOMPONENT_SLOTS( MEMCONTROLLER_ELI_SUBCOMPONENTSLOTS )
