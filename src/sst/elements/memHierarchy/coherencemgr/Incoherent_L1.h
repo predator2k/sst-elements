@@ -149,6 +149,10 @@ public:
     MemEventInitCoherence * getInitCoherenceEvent() override;
     std::set<Command> getValidReceiveEvents() override;
 
+    /* yasai (WP m8-gpu-t4): see CoherenceController; MSHR::insertEvent rejects a request at max - 1 entries */
+    bool requestsBlockedByMshr() const override { return mshr_->getSize() >= mshr_->getMaxSize() - 1; }
+    void drainReplacedLines(std::vector<Addr>& out) override { cache_array_->drainReplaced(out); }
+
     /** Serialization */
     void serialize_order(SST::Core::Serialization::serializer& ser) override;
     ImplementSerializable(SST::MemHierarchy::IncoherentL1)

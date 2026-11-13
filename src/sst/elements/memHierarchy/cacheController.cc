@@ -14,6 +14,7 @@
 // distribution.
 
 #include <sst/core/sst_config.h>
+#include <algorithm>
 #include <sst/core/params.h>
 #include <sst/core/interfaces/stringEvent.h>
 #include <sst/core/timeLord.h>
@@ -58,7 +59,7 @@ void Cache::handleEvent(SST::Event * ev) {
         fflush(stdout);
     }
 
-    eventBuffer_.push_back(event);
+    active_events_.emplace(next_event_seq_++, event); // yasai: the event buffer, by arrival number
     //printf("DBG: %s, inserted <%" PRIu64 ", %d>, size=%zu\n", getName().c_str(), event->getID().first, event->getID().second, eventBuffer_.size());
 
 }
@@ -150,26 +151,48 @@ bool Cache::clockTick(Cycle_t time) {
     // Deadlock will not occur because an event cannot indefinitely block another one
     // 1. An event can be accepted, in which case a later response moves up the queue
     // 2. An event can be rejected, in which case we check the next one with no penalty (doesn't block a later response)
-    it = eventBuffer_.begin();
-    while (it != eventBuffer_.end()) {
+    // yasai (WP m8-gpu-t4): the event buffer is active_events_ plus parked_events_, both by arrival number. The
+    // scan visits them in arrival order, as the single list did; a parked request is visited only while the MSHR
+    // has room for a request, because otherwise it would be rejected again with no state change (parkRequest).
+    unparkReplacedLines();
+    bool started = false;
+    uint64_t pos = 0;
+    while (true) {
         if (accepted == maxRequestsPerCycle_)
             break;
-        Event::id_type id = (*it)->getID();
-        Command cmd = (*it)->getCmd();
-        if (mem_h_is_debug_event((*it))) {
+        auto next = started ? active_events_.upper_bound(pos) : active_events_.begin();
+        bool from_parked = false;
+        if (!parked_events_.empty() && !coherenceMgr_->requestsBlockedByMshr()) {
+            auto p = started ? parked_events_.upper_bound(pos) : parked_events_.begin();
+            if (p != parked_events_.end() && (next == active_events_.end() || p->first < next->first)) {
+                next = p;
+                from_parked = true;
+            }
+        }
+        if (!from_parked && next == active_events_.end())
+            break;
+        uint64_t seq = next->first;
+        MemEventBase* ev = next->second;
+        started = true;
+        pos = seq;
+        if (mem_h_is_debug_event(ev)) {
             dbg_->debug(_L3_, "E: %-20" PRIu64 " %-20" PRIu64 " %-20s Event:New     (%s)\n",
-                    getCurrentSimCycle(), timestamp_, getName().c_str(), (*it)->getVerboseString().c_str());
+                    getCurrentSimCycle(), timestamp_, getName().c_str(), ev->getVerboseString().c_str());
             fflush(stdout);
         }
-        if (processEvent(*it, false)) {
+        // An accepted event may already be deleted when processEvent returns, so it is not touched after.
+        Addr parked_addr = from_parked ? static_cast<MemEvent*>(ev)->getBaseAddr() : 0;
+        if (processEvent(ev, false)) {
             accepted++;
             statRecvEvents->addData(1);
-            it = eventBuffer_.erase(it);
-            //printf("DBG: %s, erased <%" PRIu64 ", %d>, it=%d, size=%zu\n", getName().c_str(), id.first, id.second, it == eventBuffer_.end(), eventBuffer_.size());
-        } else {
-            it++;
-            //printf("DBG: %s, left <%" PRIu64 ", %d>, it=%d, size=%zu\n", getName().c_str(), id.first, id.second, it == eventBuffer_.end(), eventBuffer_.size());
+            if (from_parked)
+                forgetParked(seq, parked_addr);
+            else
+                active_events_.erase(seq);
+        } else if (!from_parked && park_rejected_ && !banked_ && coherenceMgr_->lastRejectChangedNothing()) {
+            parkRequest(seq, ev);
         }
+        unparkReplacedLines();
     }
     while (!prefetchBuffer_.empty()) {
         if (mem_h_is_debug_event(prefetchBuffer_.front())) {
@@ -198,7 +221,7 @@ bool Cache::clockTick(Cycle_t time) {
     idle &= coherenceMgr_->checkIdle();
 
     // Disable lower-level cache clocks if they're idle
-    if (eventBuffer_.empty() && retryBuffer_.empty() && idle) {
+    if (active_events_.empty() && parked_events_.empty() && retryBuffer_.empty() && idle) {
         turnClockOff();
         return true;
     }
@@ -238,6 +261,8 @@ void Cache::turnClockOff() {
  *   Returns: whether event was accepted/can be popped off event queue
  */
 bool Cache::processEvent(MemEventBase* ev, bool retry) {
+    coherenceMgr_->clearRejectChangedNothing(); // yasai: set only by a handler that rejects with no state change
+
     // Global noncacheable request flag
     if (allNoncacheableRequests_) {
         ev->setFlag(MemEvent::F_NONCACHEABLE);
@@ -397,6 +422,45 @@ void Cache::updateAccessStatus(Addr addr) {
     if (banked_) {
         Addr bank = coherenceMgr_->getBank(addr);
         bankStatus_[bank] = true;
+    }
+}
+
+/* yasai (WP m8-gpu-t4): park a request the coherence manager rejected with no state change because the MSHR
+ * was full and its line was absent. While the MSHR stays full and no replace() gives the line address to a
+ * line, processing it again would reject it again with no state change (CoherenceController), so clockTick
+ * does not visit it. A banked cache does not park: arbitrateAccess counts a bank conflict per rejection. */
+void Cache::parkRequest(uint64_t seq, MemEventBase* ev) {
+    active_events_.erase(seq);
+    parked_events_.emplace(seq, ev);
+    parked_by_line_[static_cast<MemEvent*>(ev)->getBaseAddr()].push_back(seq);
+}
+
+/* yasai: drop an accepted parked request (processEvent may have deleted it, so only its number is used) */
+void Cache::forgetParked(uint64_t seq, Addr addr) {
+    parked_events_.erase(seq);
+    auto it = parked_by_line_.find(addr);
+    if (it == parked_by_line_.end())
+        return;
+    std::vector<uint64_t>& seqs = it->second;
+    seqs.erase(std::remove(seqs.begin(), seqs.end(), seq), seqs.end());
+    if (seqs.empty())
+        parked_by_line_.erase(it);
+}
+
+/* yasai: a replace() made these line addresses present, so their parked requests return to the buffer */
+void Cache::unparkReplacedLines() {
+    replaced_lines_.clear();
+    coherenceMgr_->drainReplacedLines(replaced_lines_);
+    for (Addr addr : replaced_lines_) {
+        auto it = parked_by_line_.find(addr);
+        if (it == parked_by_line_.end())
+            continue;
+        for (uint64_t seq : it->second) {
+            auto p = parked_events_.find(seq);
+            active_events_.emplace(seq, p->second);
+            parked_events_.erase(p);
+        }
+        parked_by_line_.erase(it);
     }
 }
 
@@ -644,7 +708,7 @@ void Cache::finish() {
 void Cache::printStatus(Output &out) {
     out.output("MemHierarchy::Cache %s\n", getName().c_str());
     out.output("  Clock is %s. Last active cycle: %" PRIu64 "\n", clockIsOn_ ? "on" : "off", timestamp_);
-    out.output("  Events in queues: Retry = %zu, Event = %zu, Prefetch = %zu\n", retryBuffer_.size(), eventBuffer_.size(), prefetchBuffer_.size());
+    out.output("  Events in queues: Retry = %zu, Event = %zu, Prefetch = %zu\n", retryBuffer_.size(), active_events_.size() + parked_events_.size(), prefetchBuffer_.size());
     if (mshr_) {
         out.output("  MSHR Status:\n");
         mshr_->printStatus(out);
@@ -711,7 +775,28 @@ void Cache::serialize_order(SST::Core::Serialization::serializer& ser) {
     SST_SER(bankStatus_);
     SST_SER(addrsThisCycle_);
     SST_SER(retryBuffer_);
+    // yasai: the event buffer travels as one list in arrival order; a restored cache parks nothing.
+    if (ser.mode() != SST::Core::Serialization::serializer::UNPACK) {
+        eventBuffer_.clear();
+        auto a = active_events_.begin();
+        auto p = parked_events_.begin();
+        while (a != active_events_.end() || p != parked_events_.end()) {
+            if (p == parked_events_.end() || (a != active_events_.end() && a->first < p->first))
+                eventBuffer_.push_back((a++)->second);
+            else
+                eventBuffer_.push_back((p++)->second);
+        }
+    }
     SST_SER(eventBuffer_);
+    if (ser.mode() == SST::Core::Serialization::serializer::UNPACK) {
+        active_events_.clear();
+        parked_events_.clear();
+        parked_by_line_.clear();
+        for (MemEventBase* ev : eventBuffer_)
+            active_events_.emplace(next_event_seq_++, ev);
+    }
+    eventBuffer_.clear();
+    SST_SER(park_rejected_);
     SST_SER(prefetchBuffer_);
     SST_SER(noncacheableResponseDst_);
 

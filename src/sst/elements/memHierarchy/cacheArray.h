@@ -49,6 +49,8 @@ class CacheArray {
         Addr            slice_size_; // For cache slices
         Addr            slice_step_; // For cache slices
         unsigned int    banks_;
+        bool            log_replaced_ = false;   // yasai: record the line addresses replace() sets
+        std::vector<Addr> replaced_;              // yasai: line addresses set by replace() since the last drain
         vector<T*>      lines_; // The actual cache
         State* setStates;
         std::map<unsigned int, std::vector<ReplacementInfo*> > rInfo;   // Lookup a vector of replacementInfo by set ID
@@ -84,6 +86,15 @@ class CacheArray {
 
         /** Deallocate a line and notify replacement manager that it's been deallocated */
         void deallocate(T* candidate);
+
+        /** yasai (WP m8-gpu-t4): record every line address replace() gives a line, for
+         *  drainReplaced(); a line becomes present for lookup() only there */
+        void logReplaced() { log_replaced_ = true; }
+        /** yasai: append the recorded line addresses to out and forget them */
+        void drainReplaced(std::vector<Addr>& out) {
+            out.insert(out.end(), replaced_.begin(), replaced_.end());
+            replaced_.clear();
+        }
 
     /**** Configuration and output */
         void setSliceAware(Addr size, Addr step);
@@ -208,6 +219,8 @@ void CacheArray<T>::replace(Addr addr, T* candidate) {
     replacement_mgr_->replaced(index);
     candidate->reset();
     candidate->setAddr(addr);
+    if (log_replaced_)
+        replaced_.push_back(addr);
     replacement_mgr_->update(index, lines_[index]->getReplacementInfo());
 }
 

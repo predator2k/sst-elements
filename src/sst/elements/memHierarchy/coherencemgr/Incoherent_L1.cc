@@ -47,6 +47,7 @@ IncoherentL1::IncoherentL1(ComponentId_t id, Params& params, Params& owner_param
     HashFunction * ht = createHashFunction(params);
 
     cache_array_ = new CacheArray<L1CacheLine>(debug_, lines, assoc, line_size_, rmgr, ht);
+    cache_array_->logReplaced(); // yasai: Cache unparks requests whose line a replace() makes present
     cache_array_->setBanked(params.find<uint64_t>("banks", 0));
 
     llsc_block_cycles_ = params.find<Cycle_t>("llsc_block_cycles", 0);
@@ -152,6 +153,8 @@ IncoherentL1::IncoherentL1(ComponentId_t id, Params& params, Params& owner_param
 bool IncoherentL1::handleGetS(MemEvent* event, bool in_mshr){
     Addr addr = event->getBaseAddr();
     L1CacheLine * line = cache_array_->lookup(addr, true);
+    // yasai: with no line, lookup changed nothing, so an MSHR-full rejection below changes no state
+    const bool no_line = (line == nullptr);
     bool local_prefetch = event->isPrefetch() && (event->getRqstr() == cachename_);
     State state = line ? line->getState() : I;
     uint64_t send_time = 0;
@@ -227,6 +230,10 @@ bool IncoherentL1::handleGetS(MemEvent* event, bool in_mshr){
         event_debuginfo_.verbose_line = line->getString();
     }
 
+    // yasai: an MSHR-full rejection of a request with no line changes no state (recordMiss only marks it a
+    // miss again), so Cache may park the request (CoherenceController, WP m8-gpu-t4)
+    if (status == MemEventStatus::Reject && no_line && !in_mshr && !event->isPrefetch())
+        reject_changed_nothing_ = true;
     return ((status == MemEventStatus::Reject) ? false : true);
 }
 
@@ -241,6 +248,8 @@ bool IncoherentL1::handleWrite(MemEvent* event, bool in_mshr) {
 bool IncoherentL1::handleGetX(MemEvent* event, bool in_mshr) {
     Addr addr = event->getBaseAddr();
     L1CacheLine * line = cache_array_->lookup(addr, true);
+    // yasai: with no line, lookup changed nothing, so an MSHR-full rejection below changes no state
+    const bool no_line = (line == nullptr);
     State state = line ? line->getState() : I;
 
     if (mem_h_is_debug_addr(addr))
@@ -335,6 +344,10 @@ bool IncoherentL1::handleGetX(MemEvent* event, bool in_mshr) {
         event_debuginfo_.verbose_line = line->getString();
     }
 
+    // yasai: an MSHR-full rejection of a request with no line changes no state (recordMiss only marks it a
+    // miss again), so Cache may park the request (CoherenceController, WP m8-gpu-t4)
+    if (status == MemEventStatus::Reject && no_line && !in_mshr && !event->isPrefetch())
+        reject_changed_nothing_ = true;
     return (status == MemEventStatus::Reject) ? false : true;
 }
 
@@ -342,6 +355,8 @@ bool IncoherentL1::handleGetX(MemEvent* event, bool in_mshr) {
 bool IncoherentL1::handleGetSX(MemEvent* event, bool in_mshr) {
     Addr addr = event->getBaseAddr();
     L1CacheLine * line = cache_array_->lookup(addr, true);
+    // yasai: with no line, lookup changed nothing, so an MSHR-full rejection below changes no state
+    const bool no_line = (line == nullptr);
     State state = line ? line->getState() : I;
 
     MemEventStatus status = MemEventStatus::OK;
@@ -411,6 +426,10 @@ bool IncoherentL1::handleGetSX(MemEvent* event, bool in_mshr) {
         event_debuginfo_.verbose_line = line->getString();
     }
 
+    // yasai: an MSHR-full rejection of a request with no line changes no state (recordMiss only marks it a
+    // miss again), so Cache may park the request (CoherenceController, WP m8-gpu-t4)
+    if (status == MemEventStatus::Reject && no_line && !in_mshr && !event->isPrefetch())
+        reject_changed_nothing_ = true;
     return (status == MemEventStatus::Reject) ? false : true;
 }
 

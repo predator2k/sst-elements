@@ -64,6 +64,7 @@ Cache::Cache(ComponentId_t id, Params &params) : Component(id) {
 
 
     allNoncacheableRequests_    = params.find<bool>("force_noncacheable_reqs", false);
+    park_rejected_              = params.find<bool>("yasai_park_rejected", true);
     maxRequestsPerCycle_        = params.find<int>("max_requests_per_cycle",-1);
     string packetSize           = params.find<std::string>("min_packet_size", "8B");
 

@@ -50,6 +50,21 @@ public:
     virtual ~CoherenceController() { }
 
     /*********************************************************************************
+     * yasai (WP m8-gpu-t4): requests parked while the MSHR is full
+     * A handler that rejects a request because the MSHR is full and the line is absent changes no state
+     * (its lookup finds nothing and the MSHR insert fails), and it would reject the request in the same
+     * way while both still hold. It sets reject_changed_nothing_ (Cache clears it before each handler call),
+     * and Cache::clockTick skips the parked request while requestsBlockedByMshr() holds and no replace()
+     * has given its line address to a line (drainReplacedLines). The base class parks nothing.
+     *********************************************************************************/
+    void clearRejectChangedNothing() { reject_changed_nothing_ = false; }
+    bool lastRejectChangedNothing() const { return reject_changed_nothing_; }
+    /* true while an MSHR insert of a request (not a forwarded one) would fail */
+    virtual bool requestsBlockedByMshr() const { return false; }
+    /* Append the line addresses that became present since the last call */
+    virtual void drainReplacedLines(std::vector<Addr>& UNUSED(out)) {}
+
+    /*********************************************************************************
      * Event handlers - one per event type
      * Handlers return whether the event was accepted (true) or rejected (false)
      *********************************************************************************/
@@ -300,6 +315,9 @@ protected:
 
     /* Miss status handling register */
     MSHR * mshr_;
+
+    /* yasai: the last handler call rejected its request with no state change (see above) */
+    bool reject_changed_nothing_ = false;
 
     /* Listeners: prefetchers, tracers, etc. */
     std::vector<CacheListener*> listeners_;

@@ -18,6 +18,8 @@
 
 #include <queue>
 #include <map>
+#include <unordered_map>
+#include <vector>
 #include <string>
 #include <sstream>
 
@@ -90,7 +92,8 @@ public:
             {"force_noncacheable_reqs", "(bool) Used for verification purposes. All requests are considered to be 'noncacheable'. Options: 0[off], 1[on]", "false"},
             {"min_packet_size",         "(string) Number of bytes in a request/response not including payload (e.g., addr + cmd). Specify in B.", "8B"},
             {"banks",                   "(uint) Number of cache banks: One access per bank per cycle. Use '0' to simulate no bank limits (only limits on bandwidth then are max_requests_per_cycle and *_link_width", "0"},
-            {"node",			        "(uint) Node number in multinode environment", "0"})
+            {"node",			        "(uint) Node number in multinode environment", "0"},
+            {"yasai_park_rejected",     "(bool) yasai (WP m8-gpu-t4): do not revisit, while the MSHR is full, requests the coherence manager rejected with no state change because the MSHR was full and the line was absent. Every result is the same either way; 0 visits every request every cycle as before (for comparisons). Options: 0[off], 1[on]", "true"})
 
     SST_ELI_DOCUMENT_PORTS(
             {"highlink",        "Non-network upper/processor-side link (i.e., link towards the core/accelerator/etc.). This port loads the 'memHierarchy.MemLink' manager. "
@@ -267,6 +270,14 @@ private:
     bool arbitrateAccess(Addr addr);
     void updateAccessStatus(Addr addr);
 
+    /* yasai (WP m8-gpu-t4): parking of requests that an MSHR-full rejection cannot change (see
+     * CoherenceController). clockTick visits a parked request only while requestsBlockedByMshr() is false;
+     * unparkReplacedLines() returns the requests of every line address a replace() made present. Every
+     * statistic and every state change stays as when every request is processed every cycle. */
+    void parkRequest(uint64_t seq, MemEventBase* ev);
+    void forgetParked(uint64_t seq, Addr addr);
+    void unparkReplacedLines();
+
     // Process coherence initialization events
     void processInitCoherenceEvent(MemEventInitCoherence* event, bool src);
 
@@ -292,6 +303,7 @@ private:
     SimTime_t           timeout_;
     uint64_t            maxOutstandingPrefetch_;
     bool                banked_;
+    bool                park_rejected_ = true;    // yasai: yasai_park_rejected
 
     /** Clocks *****************************************************************/
     Clock::HandlerBase*     clockHandler_;
@@ -307,7 +319,12 @@ private:
     std::vector<bool>           bankStatus_;
     std::set<Addr>              addrsThisCycle_;
     std::list<MemEventBase*>    retryBuffer_;
-    std::list<MemEventBase*>    eventBuffer_;
+    std::list<MemEventBase*>    eventBuffer_;     // yasai: only the serialized form of the two maps below
+    std::map<uint64_t, MemEventBase*> active_events_;   // yasai: the event buffer by arrival number
+    std::map<uint64_t, MemEventBase*> parked_events_;   // yasai: parked requests by arrival number
+    std::unordered_map<Addr, std::vector<uint64_t>> parked_by_line_;  // yasai: parked arrival numbers per base address
+    std::vector<Addr>           replaced_lines_;    // yasai: scratch of unparkReplacedLines
+    uint64_t                    next_event_seq_ = 0; // yasai: arrival number of the next event
     std::queue<MemEventBase*>   prefetchBuffer_;
     std::map<SST::Event::id_type, std::string> noncacheableResponseDst_;
 
